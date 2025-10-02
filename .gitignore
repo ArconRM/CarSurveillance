@@ -1,0 +1,10 @@
+bin/
+obj/
+.idea/
+/CarSurveillance.Server/Data/
+/packages/
+riderModule.iml
+/_ReSharper.Caches/
+*.DS_Store
+/CarSurveillance.App/CarSurveillance.App.xcodeproj/xcuserdata
+/CarSurveillance.App/CarSurveillance.App.xcodeproj/project.xcworkspace/xcuserdata
