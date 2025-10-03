@@ -1,6 +1,3 @@
 namespace CarSurveillance.Server.Repository;
 
-public class CarSurveillanceContext
-{
-    
-}
+public class CarSurveillanceContext { }

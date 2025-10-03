@@ -1,6 +1,6 @@
 namespace CarSurveillance.Server.Core.Interfaces;
 
-public interface IBaseService<T> where T: class, IBaseEntity
+public interface IBaseService<T> where T : class, IBaseEntity
 {
     Task<T?> GetAsync(Guid uuid, CancellationToken token);
 

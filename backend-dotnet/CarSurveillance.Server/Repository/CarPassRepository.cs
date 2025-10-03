@@ -5,7 +5,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace CarSurveillance.Server.Repository;
 
-public class CarPassRepository: BaseRepository<CarPass>, ICarPassRepository
+public class CarPassRepository : BaseRepository<CarPass>, ICarPassRepository
 {
     public CarPassRepository(DbContext context) : base(context) { }
 }

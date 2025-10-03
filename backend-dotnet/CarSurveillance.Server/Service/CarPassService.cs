@@ -5,7 +5,7 @@ using CarSurveillance.Server.Service.Interfaces;
 
 namespace CarSurveillance.Server.Service;
 
-public class CarPassService: BaseService<CarPass>, ICarPassService
+public class CarPassService : BaseService<CarPass>, ICarPassService
 {
     public CarPassService(IBaseRepository<CarPass> repository) : base(repository) { }
 }
