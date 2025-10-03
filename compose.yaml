@@ -3,15 +3,24 @@
     image: carsurveillance.server
     build:
       context: .
-      dockerfile: CarSurveillance.Server/Dockerfile
+      dockerfile: backend-dotnet/CarSurveillance.Server/Dockerfile
     environment:
       - ASPNETCORE_URLS=http://+:5035;
     ports:
       - "5035:5035"
     volumes:
-      - carsurveillance_data:/data
+      - /media/sf_SharedWithUbuntu/CarSurveillanceData:/data
     depends_on:
       - db
+
+  carsurveillance.modelsinference:
+    build:
+      context: .
+      dockerfile: models-inference/Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - /media/sf_SharedWithUbuntu/CarSurveillanceData:/data
 
   db:
     image: postgres:16
@@ -27,4 +36,3 @@
 
 volumes:
   postgres_data:
-  carsurveillance_data:
