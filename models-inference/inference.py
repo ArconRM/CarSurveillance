@@ -2,9 +2,14 @@ from fastapi import FastAPI
 from pydantic import BaseModel, Field
 from ultralytics import YOLO
 import os, cv2, glob
+import torch
+
+torch.set_num_threads(2)
+torch.set_num_interop_threads(2)
 
 app = FastAPI()
 model_weights = YOLO("models/best.pt")
+model = YOLO(model_weights)
 
 class CropToLicensePlatesRequest(BaseModel):
     raw_data_dir: str = Field(alias="RawDataPath")
@@ -12,12 +17,6 @@ class CropToLicensePlatesRequest(BaseModel):
 
 @app.post("/api/cropToLicensePlates")
 async def crop_to_license_plates(req: CropToLicensePlatesRequest):
-    try:
-        model = YOLO(model_weights)
-    except Exception as e:
-        print("Ultralytics not installed or failed to import. Please install ultralytics and try again.")
-        return {"error": str(e)}
-
     raw_data_dir = req.raw_data_dir
     result_data_dir = req.result_data_dir
 
