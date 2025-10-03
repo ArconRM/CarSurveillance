@@ -22,7 +22,8 @@ class RecordingViewModel: ObservableObject {
     
     private let framesPerSecond: Double = 1.0
     private let uploadIntervalMinutes: Double = 1.0
-    private let apiEndpoint = "http://192.168.1.46:5035/api/Data/UploadBatch"
+    private let apiUploadEndpoint = "http://192.168.1.46:5035/api/Data/UploadBatch"
+    private let apiCanSendEndpoint = "http://192.168.1.46:5035/api/Data/CanSend"
     
     init(frameViewModel: FrameViewModel) {
         self.frameViewModel = frameViewModel
@@ -80,43 +81,63 @@ class RecordingViewModel: ObservableObject {
     }
     
     private func makeBatchAndUpload() {
-        DispatchQueue.main.async {
-            self.uploadStatus = "Zipping frames..."
-        }
+        var request = URLRequest(url: URL(string: apiCanSendEndpoint)!,timeoutInterval: Double.infinity)
+        request.addValue("*/*", forHTTPHeaderField: "accept")
         
-        DispatchQueue.global(qos: .utility).async { [weak self] in
-            guard let self = self else { return }
+        request.httpMethod = "GET"
+        
+        let task = URLSession.shared.dataTask(with: request) { data, response, error in
+            guard let data = data else {
+                print(String(describing: error))
+                return
+            }
             
-            let timestamp = Int(Date().timeIntervalSince1970)
-            let batch = frameBuffer.enumerated().map { index, data in
-                (name: "frame_\(timestamp)_\(index).jpg", data: data)
+            guard let canSend = try? JSONDecoder().decode(Bool.self, from: data), canSend
+            else {
+                print("Not sending time")
+                return
             }
             
             DispatchQueue.main.async {
-                self.uploadStatus = "Uploading..."
+                self.uploadStatus = "Zipping frames..."
             }
             
-            self.uploadImageBatch(batch) { [weak self] success in
+            DispatchQueue.global(qos: .utility).async { [weak self] in
+                guard let self = self else { return }
+                
+                let timestamp = Int(Date().timeIntervalSince1970)
+                let batch = frameBuffer.enumerated().map { index, data in
+                    (name: "frame_\(timestamp)_\(index).jpg", data: data)
+                }
+                
                 DispatchQueue.main.async {
-                    if success {
-                        self?.uploadStatus = "Upload successful"
-                    } else {
-                        self?.uploadStatus = "Upload failed"
+                    self.uploadStatus = "Uploading..."
+                }
+                
+                self.uploadImageBatch(batch) { [weak self] success in
+                    DispatchQueue.main.async {
+                        if success {
+                            self?.uploadStatus = "Upload successful"
+                        } else {
+                            self?.uploadStatus = "Upload failed"
+                        }
+                        self?.cleanupFrameFiles()
                     }
-                    self?.cleanupFrameFiles()
                 }
             }
         }
+        
+        task.resume()
     }
     
     private func uploadImageBatch(_ images: [(name: String, data: Data)], completion: @escaping (Bool) -> Void) {
         let boundary = "Boundary-\(UUID().uuidString)"
-        var request = URLRequest(url: URL(string: apiEndpoint)!)
+        var request = URLRequest(url: URL(string: apiUploadEndpoint)!)
         request.httpMethod = "POST"
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-
+        
         var body = Data()
-
+        
         for image in images {
             body.append("--\(boundary)\r\n".data(using: .utf8)!)
             body.append("Content-Disposition: form-data; name=\"images\"; filename=\"\(image.name)\"\r\n".data(using: .utf8)!)
@@ -124,11 +145,11 @@ class RecordingViewModel: ObservableObject {
             body.append(image.data)
             body.append("\r\n".data(using: .utf8)!)
         }
-
+        
         body.append("--\(boundary)--\r\n".data(using: .utf8)!)
-
+        
         request.httpBody = body
-
+        
         let task = URLSession.shared.dataTask(with: request) { data, response, error in
             if let error = error {
                 print("Upload error: \(error)")
@@ -146,7 +167,7 @@ class RecordingViewModel: ObservableObject {
         
         task.resume()
     }
-
+    
     
     private func cleanupFrameFiles() {
         frameBuffer.removeAll()

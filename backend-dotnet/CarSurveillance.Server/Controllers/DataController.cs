@@ -18,6 +18,12 @@ public class DataController : ControllerBase
         _logger = logger;
     }
 
+    [HttpGet(nameof(CanSend))]
+    public async Task<IActionResult> CanSend()
+    {
+        return Ok(DateTime.Now.Hour >= 9 && DateTime.Now.Hour < 18);
+    }
+
     [HttpPost(nameof(UploadZip))]
     public async Task<IActionResult> UploadZip(UploadZipRequest request, CancellationToken token)
     {
