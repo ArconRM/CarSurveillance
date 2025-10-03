@@ -8,7 +8,6 @@
 import Foundation
 internal import Combine
 import UIKit
-import ZIPFoundation
 
 class RecordingViewModel: ObservableObject {
     @Published var isRecording: Bool = false
