@@ -1,25 +1,35 @@
 from fastapi import FastAPI
+from pydantic import BaseModel, Field
 from ultralytics import YOLO
 import os, cv2, glob
 
 app = FastAPI()
 model_weights = YOLO("models/best.pt")
 
-@app.post("/cropToLicensePlates")
-async def crop_to_license_plates(raw_data_dir: str, result_data_dir: str):
+class CropToLicensePlatesRequest(BaseModel):
+    raw_data_dir: str = Field(alias="RawDataPath")
+    result_data_dir: str = Field(alias="ResultDataPath")
+
+@app.post("/api/cropToLicensePlates")
+async def crop_to_license_plates(req: CropToLicensePlatesRequest):
     try:
-        from ultralytics import YOLO
+        model = YOLO(model_weights)
     except Exception as e:
         print("Ultralytics not installed or failed to import. Please install ultralytics and try again.")
-        return
+        return {"error": str(e)}
 
-    model = YOLO(model_weights)
+    raw_data_dir = req.raw_data_dir
+    result_data_dir = req.result_data_dir
+
     frame_paths = sorted(glob.glob(os.path.join(raw_data_dir, "*.png")))
     print(f"Found {len(frame_paths)} frames in {raw_data_dir}")
+
+    os.makedirs(result_data_dir, exist_ok=True)
     crop_index = 0
-    for i, fp in enumerate(frame_paths):
+    for fp in frame_paths:
         img = cv2.imread(fp)
-        if img is None: continue
+        if img is None:
+            continue
         res = model.predict(source=img, conf=0.25, imgsz=1280, verbose=False)
 
         for r in res:
@@ -30,4 +40,6 @@ async def crop_to_license_plates(raw_data_dir: str, result_data_dir: str):
                 outp = os.path.join(result_data_dir, f"crop_{crop_index:06d}.png")
                 cv2.imwrite(outp, crop)
                 crop_index += 1
+
     print("Detection+crop finished. Crops saved to", result_data_dir)
+    return {"status": "ok", "crops_saved": crop_index}
