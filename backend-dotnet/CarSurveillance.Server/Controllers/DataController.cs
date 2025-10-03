@@ -12,7 +12,6 @@ public class DataController : ControllerBase
     private readonly IFilesService _filesService;
     private readonly ILogger<DataController> _logger;
 
-
     public DataController(IFilesService filesService, ILogger<DataController> logger)
     {
         _filesService = filesService;

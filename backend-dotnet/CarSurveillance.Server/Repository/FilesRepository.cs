@@ -9,11 +9,13 @@ namespace CarSurveillance.Server.Repository;
 public class FilesRepository : IFilesRepository
 {
     private readonly string _dataPath;
+    private readonly string _dataRawPath;
     private readonly ILogger<FilesRepository> _logger;
 
     public FilesRepository(IOptions<DataOptions> options, ILogger<FilesRepository> logger)
     {
         _dataPath = options.Value.DataPath;
+        _dataRawPath = Path.Combine(_dataPath, "raw");
         _logger = logger;
     }
 
@@ -31,7 +33,7 @@ public class FilesRepository : IFilesRepository
             if (extension is not (".jpg" or ".jpeg" or ".png" or ".gif" or ".bmp" or ".webp"))
                 continue;
 
-            var destinationPath = Path.Combine(_dataPath, entry.Name);
+            var destinationPath = Path.Combine(_dataRawPath, entry.Name);
 
             await using var entryStream = entry.Open();
             await using var fileStream = new FileStream(destinationPath, FileMode.Create, FileAccess.Write);
@@ -43,14 +45,14 @@ public class FilesRepository : IFilesRepository
     public async Task UploadBatchAsync(List<UploadFile> images, CancellationToken token)
     {
         CleanDataFolder();
-        
+
         foreach (var image in images)
         {
             var extension = Path.GetExtension(image.FileName).ToLowerInvariant();
             if (extension is not (".jpg" or ".jpeg" or ".png" or ".gif" or ".bmp" or ".webp"))
                 continue;
 
-            var destinationPath = Path.Combine(_dataPath, image.FileName);
+            var destinationPath = Path.Combine(_dataRawPath, image.FileName);
 
             await using var stream = new FileStream(destinationPath, FileMode.Create);
             await image.Content.CopyToAsync(stream, token);
@@ -60,10 +62,10 @@ public class FilesRepository : IFilesRepository
 
     private void CleanDataFolder()
     {
-        if (Directory.Exists(_dataPath))
+        if (Directory.Exists(_dataRawPath))
         {
-            var files = Directory.GetFiles(_dataPath);
-            var directories = Directory.GetDirectories(_dataPath);
+            var files = Directory.GetFiles(_dataRawPath);
+            var directories = Directory.GetDirectories(_dataRawPath);
 
             foreach (var file in files) File.Delete(file);
 
@@ -71,7 +73,7 @@ public class FilesRepository : IFilesRepository
         }
         else
         {
-            Directory.CreateDirectory(_dataPath);
+            Directory.CreateDirectory(_dataRawPath);
         }
     }
 }

@@ -1,4 +1,6 @@
 using CarSurveillance.Server;
+using CarSurveillance.Server.HttpService;
+using CarSurveillance.Server.HttpService.Interfaces;
 using CarSurveillance.Server.Options;
 using CarSurveillance.Server.Repository;
 using CarSurveillance.Server.Repository.Interfaces;
@@ -24,6 +26,12 @@ builder.Services.Configure<FormOptions>(options =>
     options.MultipartBodyLengthLimit = 1048576000;
     options.ValueLengthLimit = int.MaxValue;
     options.MemoryBufferThreshold = int.MaxValue;
+});
+
+builder.Services.AddHttpClient<IModelInferenceHttpService, ModelInferenceHttpService>(client =>
+{
+    client.BaseAddress = new Uri("http://127.0.0.1:8000");
+    client.Timeout = TimeSpan.FromMinutes(10);
 });
 
 builder.Services.AddScoped<IFilesRepository, FilesRepository>();
