@@ -10,6 +10,8 @@ using Microsoft.AspNetCore.Http.Features;
 
 var builder = WebApplication.CreateBuilder(args);
 
+var inferenceServerAddress = builder.Configuration.GetSection("ModelInferenceOptions")["ServerAddress"];
+
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddControllers();
 builder.Services.AddSwaggerGen();
@@ -30,7 +32,7 @@ builder.Services.Configure<FormOptions>(options =>
 
 builder.Services.AddHttpClient<IModelInferenceHttpService, ModelInferenceHttpService>(client =>
 {
-    client.BaseAddress = new Uri("http://127.0.0.1:8000");
+    client.BaseAddress = new Uri(inferenceServerAddress);
     client.Timeout = TimeSpan.FromMinutes(10);
 });
 
