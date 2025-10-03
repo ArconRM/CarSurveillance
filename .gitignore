@@ -1,10 +1,10 @@
 bin/
 obj/
 .idea/
-/CarSurveillance.Server/Data/
-/packages/
-riderModule.iml
-/_ReSharper.Caches/
 *.DS_Store
-/CarSurveillance.App/CarSurveillance.App.xcodeproj/xcuserdata
-/CarSurveillance.App/CarSurveillance.App.xcodeproj/project.xcworkspace/xcuserdata
+backend-dotnet/CarSurveillance.Server/Data/
+backend-dotnet/packages/
+backend-dotnet/riderModule.iml
+backend-dotnet/_ReSharper.Caches/
+app-ios/CarSurveillance.App/CarSurveillance.App.xcodeproj/xcuserdata
+app-ios/CarSurveillance.App/CarSurveillance.App.xcodeproj/project.xcworkspace/xcuserdata
