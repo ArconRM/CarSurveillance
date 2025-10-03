@@ -2,8 +2,8 @@
   carsurveillance.server:
     image: carsurveillance.server
     build:
-      context: .
-      dockerfile: backend-dotnet/CarSurveillance.Server/Dockerfile
+      context: ./backend-dotnet
+      dockerfile: CarSurveillance.Server/Dockerfile
     environment:
       - ASPNETCORE_URLS=http://+:5035;
     ports:
@@ -15,8 +15,8 @@
 
   carsurveillance.modelsinference:
     build:
-      context: .
-      dockerfile: models-inference/Dockerfile
+      context: ./models-inference
+      dockerfile: Dockerfile
     ports:
       - "8000:8000"
     volumes:
