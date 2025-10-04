@@ -28,7 +28,6 @@ public class DataProcessingBackgroundService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        await ProcessImagesAsync(stoppingToken);
         while (!stoppingToken.IsCancellationRequested)
         {
             if (IsProcessingHours()) await ProcessImagesAsync(stoppingToken);
@@ -43,8 +42,8 @@ public class DataProcessingBackgroundService : BackgroundService
         _logger.LogInformation("Started processing images at {StartTime}", DateTime.Now);
 
         await _modelInferenceHttpService.CropToLicensePlatesAsync(
-            "/Users/artemiymirotvortsev/RiderProjects/CarSurveillance/backend-dotnet/CarSurveillance.Server/Data/raw",
-            "/Users/artemiymirotvortsev/RiderProjects/CarSurveillance/backend-dotnet/CarSurveillance.Server/Data/crops",
+            _dataRawPath,
+            _dataCropsPath,
             token);
 
         stopwatch.Stop();
