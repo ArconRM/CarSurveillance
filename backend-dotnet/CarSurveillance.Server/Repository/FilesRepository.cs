@@ -8,20 +8,18 @@ namespace CarSurveillance.Server.Repository;
 
 public class FilesRepository : IFilesRepository
 {
-    private readonly string _dataPath;
     private readonly string _dataRawPath;
     private readonly ILogger<FilesRepository> _logger;
 
     public FilesRepository(IOptions<DataOptions> options, ILogger<FilesRepository> logger)
     {
-        _dataPath = options.Value.DataPath;
-        _dataRawPath = Path.Combine(_dataPath, "raw");
+        _dataRawPath = Path.Combine(options.Value.DataPath, options.Value.DataRawRelativePath);
         _logger = logger;
     }
 
     public async Task UploadZipAsync(Stream inputZip, CancellationToken token)
     {
-        CleanDataFolder();
+        EnsureFolderExist();
         using var archive = new ZipArchive(inputZip, ZipArchiveMode.Read);
 
         foreach (var entry in archive.Entries)
@@ -38,14 +36,14 @@ public class FilesRepository : IFilesRepository
             await using var entryStream = entry.Open();
             await using var fileStream = new FileStream(destinationPath, FileMode.Create, FileAccess.Write);
             await entryStream.CopyToAsync(fileStream, token);
+
             _logger.LogInformation($"Saved {entry.Name}");
         }
     }
 
     public async Task UploadBatchAsync(List<UploadFile> images, CancellationToken token)
     {
-        CleanDataFolder();
-
+        EnsureFolderExist();
         foreach (var image in images)
         {
             var extension = Path.GetExtension(image.FileName).ToLowerInvariant();
@@ -56,11 +54,12 @@ public class FilesRepository : IFilesRepository
 
             await using var stream = new FileStream(destinationPath, FileMode.Create);
             await image.Content.CopyToAsync(stream, token);
+
             _logger.LogInformation($"Saved {image.FileName}");
         }
     }
 
-    private void CleanDataFolder()
+    public void CleanRawDataFolder()
     {
         if (Directory.Exists(_dataRawPath))
         {
@@ -70,10 +69,18 @@ public class FilesRepository : IFilesRepository
             foreach (var file in files) File.Delete(file);
 
             foreach (var dir in directories) Directory.Delete(dir, true);
+
+            _logger.LogInformation($"Cleaned {_dataRawPath}");
         }
         else
         {
             Directory.CreateDirectory(_dataRawPath);
         }
+    }
+
+    private void EnsureFolderExist()
+    {
+        if (!Directory.Exists(_dataRawPath))
+            Directory.CreateDirectory(_dataRawPath);
     }
 }

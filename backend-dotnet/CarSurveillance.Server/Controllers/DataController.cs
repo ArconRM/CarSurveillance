@@ -1,7 +1,9 @@
 using CarSurveillance.Server.Dto.Requests;
 using CarSurveillance.Server.Entities;
+using CarSurveillance.Server.Options;
 using CarSurveillance.Server.Service.Interfaces;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 
 namespace CarSurveillance.Server.Controllers;
 
@@ -11,9 +13,14 @@ public class DataController : ControllerBase
 {
     private readonly IFilesService _filesService;
     private readonly ILogger<DataController> _logger;
+    private readonly DataProcessingOptions _options;
 
-    public DataController(IFilesService filesService, ILogger<DataController> logger)
+    public DataController(
+        IOptions<DataProcessingOptions> options,
+        IFilesService filesService,
+        ILogger<DataController> logger)
     {
+        _options = options.Value;
         _filesService = filesService;
         _logger = logger;
     }
@@ -21,7 +28,7 @@ public class DataController : ControllerBase
     [HttpGet(nameof(CanSend))]
     public async Task<IActionResult> CanSend()
     {
-        return Ok(DateTime.Now.Hour >= 9 && DateTime.Now.Hour < 18);
+        return Ok(DateTime.Now.Hour > _options.UploadingHourStart && DateTime.Now.Hour < _options.UploadingHourEnd);
     }
 
     [HttpPost(nameof(UploadZip))]
@@ -49,6 +56,13 @@ public class DataController : ControllerBase
 
         await _filesService.UploadBatchAsync(dtos, token);
 
+        return Ok();
+    }
+
+    [HttpPost(nameof(CleanRawDataFolder))]
+    public async Task<IActionResult> CleanRawDataFolder()
+    {
+        _filesService.CleanRawDataFolder();
         return Ok();
     }
 }

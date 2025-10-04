@@ -22,4 +22,9 @@ public class FilesService : IFilesService
     {
         await _filesRepository.UploadBatchAsync(images, token);
     }
+
+    public void CleanRawDataFolder()
+    {
+        _filesRepository.CleanRawDataFolder();
+    }
 }

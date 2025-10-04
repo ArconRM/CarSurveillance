@@ -19,6 +19,9 @@ builder.Services.AddSwaggerGen();
 builder.Services.Configure<DataOptions>(
     builder.Configuration.GetSection("DataOptions"));
 
+builder.Services.Configure<DataProcessingOptions>(
+    builder.Configuration.GetSection("DataProcessingOptions"));
+
 builder.WebHost.ConfigureKestrel(serverOptions => { serverOptions.Limits.MaxRequestBodySize = 1048576000; });
 
 builder.Services.Configure<IISServerOptions>(options => { options.MaxRequestBodySize = 1048576000; });
@@ -38,6 +41,8 @@ builder.Services.AddHttpClient<IModelInferenceHttpService, ModelInferenceHttpSer
 
 builder.Services.AddScoped<IFilesRepository, FilesRepository>();
 builder.Services.AddScoped<IFilesService, FilesService>();
+
+builder.Services.AddHostedService<DataProcessingBackgroundService>();
 
 var app = builder.Build();
 
