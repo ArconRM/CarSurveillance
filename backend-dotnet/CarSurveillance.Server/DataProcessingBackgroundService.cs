@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using CarSurveillance.Server.HttpService.Interfaces;
 using CarSurveillance.Server.Options;
+using CarSurveillance.Server.Service.Interfaces;
 using Microsoft.Extensions.Options;
 
 namespace CarSurveillance.Server;
@@ -10,19 +11,22 @@ public class DataProcessingBackgroundService : BackgroundService
     private readonly string _dataCropsPath;
     private readonly DataProcessingOptions _dataProcessingOptions;
     private readonly string _dataRawPath;
-    private readonly ILogger<DataProcessingBackgroundService> _logger;
     private readonly IModelInferenceHttpService _modelInferenceHttpService;
+    private readonly IFilesService _filesService;
+    private readonly ILogger<DataProcessingBackgroundService> _logger;
 
     public DataProcessingBackgroundService(
         IOptions<DataProcessingOptions> dataProcessingOptions,
         IOptions<DataOptions> dataOptions,
         IModelInferenceHttpService modelInferenceHttpService,
+        IFilesService filesService,
         ILogger<DataProcessingBackgroundService> logger)
     {
         _dataProcessingOptions = dataProcessingOptions.Value;
         _dataRawPath = Path.Combine(dataOptions.Value.DataPath, dataOptions.Value.DataRawRelativePath);
         _dataCropsPath = Path.Combine(dataOptions.Value.DataPath, dataOptions.Value.DataCropsRelativePath);
         _modelInferenceHttpService = modelInferenceHttpService;
+        _filesService = filesService;
         _logger = logger;
     }
 
@@ -30,7 +34,11 @@ public class DataProcessingBackgroundService : BackgroundService
     {
         while (!stoppingToken.IsCancellationRequested)
         {
-            if (IsProcessingHours()) await ProcessImagesAsync(stoppingToken);
+            if (IsProcessingHours())
+            {
+                await ProcessImagesAsync(stoppingToken);
+                _filesService.CleanRawDataFolder();
+            }
 
             await Task.Delay(TimeSpan.FromMinutes(30), stoppingToken);
         }
@@ -60,8 +68,8 @@ public class DataProcessingBackgroundService : BackgroundService
         return now.Hour >= _dataProcessingOptions.UploadingHourEnd ||
                now.Hour <= _dataProcessingOptions.UploadingHourStart;
     }
-    
-    private DateTime GetLocalTime() 
+
+    private DateTime GetLocalTime()
     {
         var tz = TimeZoneInfo.FindSystemTimeZoneById(_dataProcessingOptions.TimeZone);
         return TimeZoneInfo.ConvertTime(DateTime.UtcNow, tz);
