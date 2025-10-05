@@ -28,7 +28,8 @@ public class DataController : ControllerBase
     [HttpGet(nameof(CanSend))]
     public async Task<IActionResult> CanSend()
     {
-        return Ok(DateTime.Now.Hour > _options.UploadingHourStart && DateTime.Now.Hour < _options.UploadingHourEnd);
+        var now = GetLocalTime();
+        return Ok(now.Hour > _options.UploadingHourStart && now.Hour < _options.UploadingHourEnd);
     }
 
     [HttpPost(nameof(UploadZip))]
@@ -64,5 +65,11 @@ public class DataController : ControllerBase
     {
         _filesService.CleanRawDataFolder();
         return Ok();
+    }
+    
+    private DateTime GetLocalTime() 
+    {
+        var tz = TimeZoneInfo.FindSystemTimeZoneById(_options.TimeZone);
+        return TimeZoneInfo.ConvertTime(DateTime.UtcNow, tz);
     }
 }

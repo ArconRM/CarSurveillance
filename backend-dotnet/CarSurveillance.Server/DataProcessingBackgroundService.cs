@@ -56,8 +56,14 @@ public class DataProcessingBackgroundService : BackgroundService
 
     private bool IsProcessingHours()
     {
-        var now = DateTime.Now;
+        var now = GetLocalTime();
         return now.Hour >= _dataProcessingOptions.UploadingHourEnd ||
                now.Hour <= _dataProcessingOptions.UploadingHourStart;
+    }
+    
+    private DateTime GetLocalTime() 
+    {
+        var tz = TimeZoneInfo.FindSystemTimeZoneById(_dataProcessingOptions.TimeZone);
+        return TimeZoneInfo.ConvertTime(DateTime.UtcNow, tz);
     }
 }

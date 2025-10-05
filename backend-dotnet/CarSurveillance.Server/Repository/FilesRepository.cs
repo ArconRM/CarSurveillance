@@ -20,6 +20,7 @@ public class FilesRepository : IFilesRepository
     public async Task UploadZipAsync(Stream inputZip, CancellationToken token)
     {
         EnsureFolderExist();
+        CleanRawDataFolder();
         using var archive = new ZipArchive(inputZip, ZipArchiveMode.Read);
 
         foreach (var entry in archive.Entries)
@@ -44,6 +45,7 @@ public class FilesRepository : IFilesRepository
     public async Task UploadBatchAsync(List<UploadFile> images, CancellationToken token)
     {
         EnsureFolderExist();
+        CleanRawDataFolder();
         foreach (var image in images)
         {
             var extension = Path.GetExtension(image.FileName).ToLowerInvariant();

@@ -5,4 +5,6 @@ public class DataProcessingOptions
     public int UploadingHourStart { get; set; }
 
     public int UploadingHourEnd { get; set; }
+
+    public string TimeZone { get; set; }
 }
