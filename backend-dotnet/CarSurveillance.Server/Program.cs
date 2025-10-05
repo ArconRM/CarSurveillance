@@ -36,7 +36,7 @@ builder.Services.Configure<FormOptions>(options =>
 builder.Services.AddHttpClient<IModelInferenceHttpService, ModelInferenceHttpService>(client =>
 {
     client.BaseAddress = new Uri(inferenceServerAddress);
-    client.Timeout = TimeSpan.FromMinutes(10);
+    client.Timeout = TimeSpan.FromHours(10);
 });
 
 builder.Services.AddScoped<IFilesRepository, FilesRepository>();
