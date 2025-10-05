@@ -5,8 +5,8 @@ import os, cv2, glob
 import torch
 from pathlib import Path
 
-torch.set_num_threads(2)
-torch.set_num_interop_threads(2)
+torch.set_num_threads(3)
+torch.set_num_interop_threads(3)
 
 image_extensions = ("*.jpg", "*.jpeg", "*.png", "*.bmp", "*.tiff", "*.webp")
 
@@ -18,6 +18,9 @@ class CropToLicensePlatesRequest(BaseModel):
     raw_data_dir: str = Field(alias="RawDataPath")
     result_data_dir: str = Field(alias="ResultDataPath")
 
+@app.get("/health")
+def health():
+    return {"status": "ok"}
 
 @app.post("/api/cropToLicensePlates")
 async def crop_to_license_plates(req: CropToLicensePlatesRequest):
