@@ -12,13 +12,13 @@ import UIKit
 
 class FrameViewModel: NSObject, ObservableObject {
     @Published var frame: CGImage?
-    @Published var currentISO: Float = 222
+    @Published var currentISO: Float = 100
     @Published var currentShutterSpeed: Float = 1/1017.0
     @Published var currentZoom: CGFloat = 2.0
     @Published var minISO: Float = 100.0
     @Published var maxISO: Float = 200.0
-    @Published var minShutterSpeed: Float = 1/100.0
-    let maxShutterSpeed: Float = 1/60
+    let minShutterSpeed: Float = 1/5000
+    let maxShutterSpeed: Float = 1/900
     @Published var minZoom: CGFloat = 1.0
     @Published var maxZoom: CGFloat = 5.0
     
@@ -58,7 +58,7 @@ class FrameViewModel: NSObject, ObservableObject {
         let videoOutput = AVCaptureVideoDataOutput()
         
         guard permissionGranted else { return }
-        guard let videoDevice = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back) else { return }
+        guard let videoDevice = AVCaptureDevice.default(.builtInTelephotoCamera, for: .video, position: .back) else { return }
         
         self.captureDevice = videoDevice
         
@@ -138,7 +138,7 @@ class FrameViewModel: NSObject, ObservableObject {
                     self?.maxISO = maxISOValue
                     self?.currentISO = initialISO
                     
-                    self?.minShutterSpeed = minShutterSpeedValue
+//                    self?.minShutterSpeed = minShutterSpeedValue
                     self?.currentShutterSpeed = initialShutterSpeed
                     
                     self?.minZoom = minZoomValue
