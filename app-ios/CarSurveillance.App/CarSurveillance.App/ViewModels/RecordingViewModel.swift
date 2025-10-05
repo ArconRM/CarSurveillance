@@ -107,7 +107,7 @@ class RecordingViewModel: ObservableObject {
                 
                 let timestamp = Int(Date().timeIntervalSince1970)
                 let batch = frameBuffer.enumerated().map { index, data in
-                    (name: "frame_\(timestamp)_\(index).jpg", data: data)
+                    (name: "frame_\(timestamp)-\(index).jpg", data: data)
                 }
                 
                 DispatchQueue.main.async {
