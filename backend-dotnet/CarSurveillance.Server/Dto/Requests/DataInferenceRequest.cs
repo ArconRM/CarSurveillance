@@ -1,6 +1,6 @@
 namespace CarSurveillance.Server.Dto.Requests;
 
-public class CropToLicensePlatesRequest
+public class DataInferenceRequest
 {
     public string RawDataPath { get; set; }
 

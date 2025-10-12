@@ -66,8 +66,8 @@ public class DataController : ControllerBase
         _filesService.CleanRawDataFolder();
         return Ok();
     }
-    
-    private DateTime GetLocalTime() 
+
+    private DateTime GetLocalTime()
     {
         var tz = TimeZoneInfo.FindSystemTimeZoneById(_options.TimeZone);
         return TimeZoneInfo.ConvertTime(DateTime.UtcNow, tz);

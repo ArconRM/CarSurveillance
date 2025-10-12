@@ -16,9 +16,16 @@ public class ModelInferenceController : ControllerBase
     }
 
     [HttpPost(nameof(RunDetectionInference))]
-    public async Task<IActionResult> RunDetectionInference(CropToLicensePlatesRequest request, CancellationToken token)
+    public async Task<IActionResult> RunDetectionInference(DataInferenceRequest request, CancellationToken token)
     {
         await _modelInferenceHttpService.CropToLicensePlatesAsync(request.RawDataPath, request.ResultDataPath, token);
+        return Ok();
+    }
+
+    [HttpPost(nameof(RecognizeLicensePlates))]
+    public async Task<IActionResult> RecognizeLicensePlates(DataInferenceRequest request, CancellationToken token)
+    {
+        await _modelInferenceHttpService.RecognizeLicensePlates(request.RawDataPath, request.ResultDataPath, token);
         return Ok();
     }
 }

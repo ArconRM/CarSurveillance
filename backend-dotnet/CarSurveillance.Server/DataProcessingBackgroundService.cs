@@ -11,9 +11,9 @@ public class DataProcessingBackgroundService : BackgroundService
     private readonly string _dataCropsPath;
     private readonly DataProcessingOptions _dataProcessingOptions;
     private readonly string _dataRawPath;
-    private readonly IModelInferenceHttpService _modelInferenceHttpService;
     private readonly IFilesService _filesService;
     private readonly ILogger<DataProcessingBackgroundService> _logger;
+    private readonly IModelInferenceHttpService _modelInferenceHttpService;
 
     public DataProcessingBackgroundService(
         IOptions<DataProcessingOptions> dataProcessingOptions,

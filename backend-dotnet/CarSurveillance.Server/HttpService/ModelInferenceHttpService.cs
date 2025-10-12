@@ -16,13 +16,26 @@ public class ModelInferenceHttpService : IModelInferenceHttpService
 
     public async Task CropToLicensePlatesAsync(string rawDataPath, string resultDataPath, CancellationToken token)
     {
-        var request = new CropToLicensePlatesRequest
+        var request = new DataInferenceRequest
         {
             RawDataPath = rawDataPath,
             ResultDataPath = resultDataPath
         };
 
         var response = await _httpClient.PostAsJsonAsync("api/cropToLicensePlates", request,
+            _jsonSerializerOptions, token);
+        await EnsureSuccessStatusCodeAsync(response, token);
+    }
+
+    public async Task RecognizeLicensePlates(string cropsDataPath, string resultDataPath, CancellationToken token)
+    {
+        var request = new DataInferenceRequest
+        {
+            RawDataPath = cropsDataPath,
+            ResultDataPath = resultDataPath
+        };
+
+        var response = await _httpClient.PostAsJsonAsync("api/recognizeLicensePlates", request,
             _jsonSerializerOptions, token);
         await EnsureSuccessStatusCodeAsync(response, token);
     }
