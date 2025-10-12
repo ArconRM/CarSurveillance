@@ -2,5 +2,5 @@ ultralytics
 fastapi
 uvicorn
 pathlib
-paddleocr
-paddlepaddle
+onnx
+onnxruntime

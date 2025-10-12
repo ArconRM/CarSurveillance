@@ -1,11 +1,12 @@
 import json
+import numpy as np
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
 from ultralytics import YOLO
 import os, cv2, glob
 import torch
 from pathlib import Path
-from paddleocr import PaddleOCR
+import onnxruntime as ort
 
 torch.set_num_threads(3)
 torch.set_num_interop_threads(3)
@@ -14,17 +15,88 @@ image_extensions = ("*.jpg", "*.jpeg", "*.png", "*.bmp", "*.tiff", "*.webp")
 
 app = FastAPI()
 model = YOLO("models/best.pt")
-ocr = PaddleOCR(
-    use_angle_cls=False,
-    lang='en',
-    det=False,
-    rec_model_dir='models/best_model',
-    rec_char_dict_path='models/best_model/latin_plate_dict.txt',
-    use_gpu=False,
-    use_mp=True,
-    total_process_num=3,
-    show_log=False
+
+
+def load_char_dict(dict_path):
+    with open(dict_path, 'r', encoding='utf-8') as f:
+        chars = [line.strip() for line in f.readlines()]
+    return chars
+
+
+char_dict = load_char_dict('models/latin_plate_dict.txt')
+
+onnx_session = ort.InferenceSession(
+    'models/plate_rec.onnx',
+    providers=['CPUExecutionProvider']
 )
+
+input_name = onnx_session.get_inputs()[0].name
+output_name = onnx_session.get_outputs()[0].name
+
+
+def preprocess_image(img):
+    """Preprocess image for ONNX model"""
+    h, w = img.shape[:2]
+
+    ratio = 32.0 / h
+    new_w = int(w * ratio)
+    if new_w > 320:
+        new_w = 320
+        ratio = 320.0 / w
+        new_h = int(h * ratio)
+    else:
+        new_h = 32
+
+    img_resized = cv2.resize(img, (new_w, new_h))
+
+    img_norm = img_resized.astype('float32') / 255.0
+    img_norm = (img_norm - 0.5) / 0.5
+
+    # HWC to CHW
+    img_chw = img_norm.transpose((2, 0, 1))
+
+    img_batch = np.expand_dims(img_chw, axis=0)
+
+    return img_batch
+
+
+def softmax(x):
+    """Softmax function"""
+    exp_x = np.exp(x - np.max(x, axis=-1, keepdims=True))
+    return exp_x / np.sum(exp_x, axis=-1, keepdims=True)
+
+
+def decode_ctc(preds):
+    """Decode CTC output"""
+    preds_idx = np.argmax(preds, axis=2)[0]
+
+    # CTC decoding: remove consecutive duplicates and blank (last index)
+    last_idx = -1
+    result = []
+    blank_idx = len(char_dict)
+
+    for idx in preds_idx:
+        if idx != last_idx and idx != blank_idx:
+            if idx < len(char_dict):
+                result.append(char_dict[idx])
+        last_idx = idx
+
+    return ''.join(result)
+
+
+def recognize_plate(img):
+    """Run ONNX inference on plate image"""
+    input_data = preprocess_image(img)
+
+    outputs = onnx_session.run([output_name], {input_name: input_data})
+    preds = outputs[0]
+
+    text = decode_ctc(preds)
+
+    probs = softmax(preds)
+    confidence = np.mean(np.max(probs, axis=2))
+
+    return text, float(confidence)
 
 
 class CropToLicensePlatesRequest(BaseModel):
@@ -88,7 +160,7 @@ async def recognize_license_plates(req: RecognizeLicensePlatesRequest):
     """
     Run OCR on pre-cropped license plate images
     """
-    raw_data_dir = req.raw_data_dir
+    raw_data_dir = req.crops_data_dir
     result_data_dir = req.result_data_dir
 
     crop_paths = []
@@ -106,29 +178,18 @@ async def recognize_license_plates(req: RecognizeLicensePlatesRequest):
         if img is None:
             continue
 
-        result = ocr.ocr(img, cls=False)
+        # Run OCR
+        text, confidence = recognize_plate(img)
 
-        if result and result[0]:
-            text = result[0][0][1][0]
-            confidence = result[0][0][1][1]
-
-            filename = Path(cp).name
-            time = Path(cp).stem.split("_")[1]
-            results.append({
-                "time": time,
-                "filename": filename,
-                "plate_text": text,
-                "confidence": float(confidence)
-            })
-            print(f"[{idx + 1}/{len(crop_paths)}] {filename}: {text} (conf: {confidence:.3f})")
-        else:
-            print(f"[{idx + 1}/{len(crop_paths)}] {Path(cp).name}: No text detected")
-            results.append({
-                "time": time,
-                "filename": Path(cp).name,
-                "plate_text": "",
-                "confidence": 0.0
-            })
+        filename = Path(cp).name
+        time = Path(cp).stem.split("_")[1]
+        results.append({
+            "time": time,
+            "filename": filename,
+            "plate_text": text,
+            "confidence": float(confidence)
+        })
+        print(f"[{idx + 1}/{len(crop_paths)}] {filename}: {text} (conf: {confidence:.3f})")
 
     result_file = os.path.join(result_data_dir, "recognition_results.json")
     with open(result_file, 'w', encoding='utf-8') as f:
