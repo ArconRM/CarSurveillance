@@ -50,7 +50,7 @@ def preprocess_image(img):
     img_resized = cv2.resize(img, (new_w, new_h))
 
     img_norm = img_resized.astype('float32') / 255.0
-    img_norm = (img_norm - 0.5) / 0.5
+    # img_norm = (img_norm - 0.5) / 0.5
 
     # HWC to CHW
     img_chw = img_norm.transpose((2, 0, 1))
@@ -140,8 +140,13 @@ async def crop_to_license_plates(req: CropToLicensePlatesRequest):
         if img is None:
             continue
 
-        res = model.predict(source=img, conf=0.25, imgsz=1280, verbose=False)
-        for r in res:
+        results = model.predict(
+            source=img,
+            batch=10,
+            save=False,
+            device='mps'
+        )
+        for r in results:
             for box in r.boxes:
                 x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
                 crop = img[y1:y2, x1:x2].copy()
