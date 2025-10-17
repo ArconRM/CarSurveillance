@@ -71,7 +71,7 @@ class RecordingViewModel: ObservableObject {
         guard let cgImage = frameViewModel?.frame else { return }
         
         let uiImage = UIImage(cgImage: cgImage)
-        guard let jpegData = uiImage.jpegData(compressionQuality: 0.8) else {
+        guard let jpegData = uiImage.jpegData(compressionQuality: 1.0) else {
             print("Failed to convert image to JPEG")
             return
         }
