@@ -2,5 +2,5 @@ ultralytics
 fastapi
 uvicorn
 pathlib
-onnx
-onnxruntime
+paddlepaddle
+paddleocr==2.10.0
