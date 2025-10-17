@@ -1,12 +1,11 @@
 import json
-import numpy as np
 from fastapi import FastAPI
+from paddleocr import PaddleOCR
 from pydantic import BaseModel, Field
 from ultralytics import YOLO
 import os, cv2, glob
 import torch
 from pathlib import Path
-import onnxruntime as ort
 
 torch.set_num_threads(3)
 torch.set_num_interop_threads(3)
@@ -14,8 +13,14 @@ torch.set_num_interop_threads(3)
 image_extensions = ("*.jpg", "*.jpeg", "*.png", "*.bmp", "*.tiff", "*.webp")
 
 app = FastAPI()
-model = YOLO("models/best.pt")
+detection_model = YOLO("models/best.pt")
 
+ocr_model = PaddleOCR(
+    lang='en',
+    det=False,
+    rec=True,
+    use_angle_cls=False
+)
 
 def load_char_dict(dict_path):
     with open(dict_path, 'r', encoding='utf-8') as f:
@@ -24,80 +29,6 @@ def load_char_dict(dict_path):
 
 
 char_dict = load_char_dict('models/latin_plate_dict.txt')
-
-onnx_session = ort.InferenceSession(
-    'models/plate_rec.onnx',
-    providers=['CPUExecutionProvider']
-)
-
-input_name = onnx_session.get_inputs()[0].name
-output_name = onnx_session.get_outputs()[0].name
-
-
-def preprocess_image(img):
-    """Preprocess image for ONNX model"""
-    h, w = img.shape[:2]
-
-    ratio = 32.0 / h
-    new_w = int(w * ratio)
-    if new_w > 320:
-        new_w = 320
-        ratio = 320.0 / w
-        new_h = int(h * ratio)
-    else:
-        new_h = 32
-
-    img_resized = cv2.resize(img, (new_w, new_h))
-
-    img_norm = img_resized.astype('float32') / 255.0
-    # img_norm = (img_norm - 0.5) / 0.5
-
-    # HWC to CHW
-    img_chw = img_norm.transpose((2, 0, 1))
-
-    img_batch = np.expand_dims(img_chw, axis=0)
-
-    return img_batch
-
-
-def softmax(x):
-    """Softmax function"""
-    exp_x = np.exp(x - np.max(x, axis=-1, keepdims=True))
-    return exp_x / np.sum(exp_x, axis=-1, keepdims=True)
-
-
-def decode_ctc(preds):
-    """Decode CTC output"""
-    preds_idx = np.argmax(preds, axis=2)[0]
-
-    # CTC decoding: remove consecutive duplicates and blank (last index)
-    last_idx = -1
-    result = []
-    blank_idx = len(char_dict)
-
-    for idx in preds_idx:
-        if idx != last_idx and idx != blank_idx:
-            if idx < len(char_dict):
-                result.append(char_dict[idx])
-        last_idx = idx
-
-    return ''.join(result)
-
-
-def recognize_plate(img):
-    """Run ONNX inference on plate image"""
-    input_data = preprocess_image(img)
-
-    outputs = onnx_session.run([output_name], {input_name: input_data})
-    preds = outputs[0]
-
-    text = decode_ctc(preds)
-
-    probs = softmax(preds)
-    confidence = np.mean(np.max(probs, axis=2))
-
-    return text, float(confidence)
-
 
 class CropToLicensePlatesRequest(BaseModel):
     raw_data_dir: str = Field(alias="RawDataPath")
@@ -140,7 +71,7 @@ async def crop_to_license_plates(req: CropToLicensePlatesRequest):
         if img is None:
             continue
 
-        results = model.predict(
+        results = detection_model.predict(
             source=img,
             batch=10,
             save=False,
@@ -183,8 +114,11 @@ async def recognize_license_plates(req: RecognizeLicensePlatesRequest):
         if img is None:
             continue
 
-        # Run OCR
-        text, confidence = recognize_plate(img)
+        result = ocr_model.ocr(img)
+        try:
+            text, confidence = result[0][0][1]
+        except:
+            continue
 
         filename = Path(cp).name
         time = Path(cp).stem.split("_")[1]
