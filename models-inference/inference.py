@@ -4,6 +4,7 @@ from paddleocr import PaddleOCR
 from pydantic import BaseModel, Field
 from ultralytics import YOLO
 import os, cv2, glob
+import numpy as np
 import torch
 from pathlib import Path
 
@@ -22,13 +23,6 @@ ocr_model = PaddleOCR(
     use_angle_cls=False
 )
 
-def load_char_dict(dict_path):
-    with open(dict_path, 'r', encoding='utf-8') as f:
-        chars = [line.strip() for line in f.readlines()]
-    return chars
-
-
-char_dict = load_char_dict('models/latin_plate_dict.txt')
 
 class CropToLicensePlatesRequest(BaseModel):
     raw_data_dir: str = Field(alias="RawDataPath")
@@ -38,6 +32,83 @@ class CropToLicensePlatesRequest(BaseModel):
 class RecognizeLicensePlatesRequest(BaseModel):
     crops_data_dir: str = Field(alias="CropsDataPath")
     result_data_dir: str = Field(alias="ResultDataPath")
+
+
+def unwarp_plate(img, min_tilt_ratio=0.12):
+    """
+    Corrects rotation and mild perspective tilt of a license plate crop.
+    Works safely — never distorts aspect ratio or overcorrects.
+    """
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    blur = cv2.GaussianBlur(gray, (3, 3), 0)
+    edges = cv2.Canny(blur, 50, 150)
+
+    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return img
+
+    contour = max(contours, key=cv2.contourArea)
+    rect = cv2.minAreaRect(contour)
+    (cx, cy), (w, h), angle = rect
+
+    # Only rotate if plate clearly not horizontal
+    if abs(angle) > 5:
+        M = cv2.getRotationMatrix2D((cx, cy), angle, 1.0)
+        img = cv2.warpAffine(img, M, (img.shape[1], img.shape[0]),
+                             flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
+
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    blur = cv2.GaussianBlur(gray, (3, 3), 0)
+    edges = cv2.Canny(blur, 50, 150)
+    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return img
+
+    contour = max(contours, key=cv2.contourArea)
+    peri = cv2.arcLength(contour, True)
+    approx = cv2.approxPolyDP(contour, 0.02 * peri, True)
+
+    if len(approx) == 4:
+        pts = approx.reshape(4, 2).astype(np.float32)
+        (x, y, w, h) = cv2.boundingRect(pts)
+        rect = np.array([[x, y],
+                         [x + w, y],
+                         [x + w, y + h],
+                         [x, y + h]], dtype=np.float32)
+        diff_ratio = np.mean(np.abs(pts - rect)) / max(w, h)
+        if diff_ratio > min_tilt_ratio:
+            dst_pts = np.array([[0, 0], [w - 1, 0], [w - 1, h - 1], [0, h - 1]], dtype=np.float32)
+            M = cv2.getPerspectiveTransform(pts, dst_pts)
+            warped = cv2.warpPerspective(img, M, (w, h))
+            return warped
+
+    return img
+
+
+def is_valid_crop(img):
+    h, w = img.shape[:2]
+    aspect_ratio = w / h
+    return w >= 95 and aspect_ratio >= 1
+
+
+def preprocess_crop(path):
+    img = cv2.imread(path)
+    if not is_valid_crop(img):
+        return None
+
+    img = unwarp_plate(img)
+
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    gray = cv2.equalizeHist(gray)
+    gray = cv2.convertScaleAbs(gray, alpha=1.2, beta=0)
+    gray = cv2.GaussianBlur(gray, (3, 3), 0)
+
+    h, w = gray.shape
+    target_h = 100
+    new_w = int(w * (target_h / h))
+    resized = cv2.resize(gray, (new_w, target_h), interpolation=cv2.INTER_LINEAR)
+    norm = cv2.normalize(resized, None, 0, 255, cv2.NORM_MINMAX)
+    return norm
 
 
 @app.get("/health")
@@ -114,9 +185,19 @@ async def recognize_license_plates(req: RecognizeLicensePlatesRequest):
         if img is None:
             continue
 
-        result = ocr_model.ocr(img)
+        processed_img = preprocess_crop(cp)
+        if processed_img is None:
+            continue
+
+        result_raw = ocr_model.ocr(img)
         try:
-            text, confidence = result[0][0][1]
+            text_raw, confidence_raw = result_raw[0][0][1]
+        except:
+            continue
+
+        result_processed = ocr_model.ocr(processed_img)
+        try:
+            text_processed, confidence_processed = result_processed[0][0][1]
         except:
             continue
 
@@ -125,10 +206,12 @@ async def recognize_license_plates(req: RecognizeLicensePlatesRequest):
         results.append({
             "time": time,
             "filename": filename,
-            "plate_text": text,
-            "confidence": float(confidence)
+            "plate_text_raw": text_raw,
+            "confidence_raw": float(confidence_raw),
+            "plate_text_processed": text_processed,
+            "confidence_processed": float(confidence_processed),
         })
-        print(f"[{idx + 1}/{len(crop_paths)}] {filename}: {text} (conf: {confidence:.3f})")
+        print(f"[{idx + 1}/{len(crop_paths)}] {filename}: {text_raw} (conf: {confidence_raw:.3f}), {text_processed} (conf: {confidence_processed:.3f})")
 
     result_file = os.path.join(result_data_dir, "recognition_results.json")
     with open(result_file, 'w', encoding='utf-8') as f:
