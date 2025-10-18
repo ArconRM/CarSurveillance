@@ -1,5 +1,7 @@
 using System.Text.Json;
 using CarSurveillance.Server.Dto.Requests;
+using CarSurveillance.Server.Dto.Responses;
+using CarSurveillance.Server.Entities;
 using CarSurveillance.Server.HttpService.Interfaces;
 
 namespace CarSurveillance.Server.HttpService;
@@ -18,7 +20,7 @@ public class ModelInferenceHttpService : IModelInferenceHttpService
     {
         var request = new DataInferenceRequest
         {
-            RawDataPath = rawDataPath,
+            CropsDataPath = rawDataPath,
             ResultDataPath = resultDataPath
         };
 
@@ -27,17 +29,21 @@ public class ModelInferenceHttpService : IModelInferenceHttpService
         await EnsureSuccessStatusCodeAsync(response, token);
     }
 
-    public async Task RecognizeLicensePlates(string cropsDataPath, string resultDataPath, CancellationToken token)
+    public async Task<IEnumerable<CarPassRecord>> RecognizeLicensePlates(
+        string cropsDataPath, string resultDataPath, CancellationToken token)
     {
         var request = new DataInferenceRequest
         {
-            RawDataPath = cropsDataPath,
+            CropsDataPath = cropsDataPath,
             ResultDataPath = resultDataPath
         };
 
         var response = await _httpClient.PostAsJsonAsync("api/recognizeLicensePlates", request,
             _jsonSerializerOptions, token);
         await EnsureSuccessStatusCodeAsync(response, token);
+
+        var json = await response.Content.ReadAsStringAsync(token);
+        return DeserializeRecognitionData(json);
     }
 
     private async Task EnsureSuccessStatusCodeAsync(HttpResponseMessage response, CancellationToken token)
@@ -51,5 +57,25 @@ public class ModelInferenceHttpService : IModelInferenceHttpService
                 response.StatusCode
             );
         }
+    }
+
+    private IEnumerable<CarPassRecord> DeserializeRecognitionData(string jsonResponse)
+    {
+        var options = new JsonSerializerOptions
+        {
+            PropertyNameCaseInsensitive = true
+        };
+
+        var recognitionData = JsonSerializer.Deserialize<RecognitionResponse>(jsonResponse, options);
+
+        return recognitionData.Results.Select(r => new CarPassRecord
+        {
+            DateTime = DateTimeOffset.FromUnixTimeSeconds(long.Parse(r.Time)).UtcDateTime,
+            Filename = r.Filename,
+            PlateTextRaw = r.PlateTextRaw,
+            ConfidenceRaw = r.ConfidenceRaw,
+            PlateTextProcessed = r.PlateTextProcessed,
+            ConfidenceProcessed = r.ConfidenceProcessed
+        });
     }
 }

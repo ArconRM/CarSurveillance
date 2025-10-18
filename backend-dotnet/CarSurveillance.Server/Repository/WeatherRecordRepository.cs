@@ -4,7 +4,7 @@ using CarSurveillance.Server.Repository.Interfaces;
 
 namespace CarSurveillance.Server.Repository;
 
-public class CarPassRepository : BaseRepository<CarPassRecord>, ICarPassRepository
+public class WeatherRecordRepository : BaseRepository<WeatherRecord>, IWeatherRecordRepository
 {
-    public CarPassRepository(CarSurveillanceContext context) : base(context) { }
+    public WeatherRecordRepository(CarSurveillanceContext context) : base(context) { }
 }

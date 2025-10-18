@@ -7,4 +7,6 @@ public class DataOptions
     public string DataRawRelativePath { get; set; }
 
     public string DataCropsRelativePath { get; set; }
+
+    public string DataResultRelativePath { get; set; }
 }
