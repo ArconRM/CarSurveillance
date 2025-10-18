@@ -202,7 +202,7 @@ async def recognize_license_plates(req: RecognizeLicensePlatesRequest):
             continue
 
         filename = Path(cp).name
-        time = Path(cp).stem.split("_")[1]
+        time = Path(cp).stem.split("_")[1].split("-")[0]
         results.append({
             "time": time,
             "filename": filename,
