@@ -1,6 +1,6 @@
 namespace CarSurveillance.Server.Dto.Requests;
 
-public class DataInferenceRequest
+public class DataRecognizeInferenceRequest
 {
     public string CropsDataPath { get; set; }
 

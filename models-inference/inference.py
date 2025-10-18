@@ -26,7 +26,7 @@ ocr_model = PaddleOCR(
 
 class CropToLicensePlatesRequest(BaseModel):
     raw_data_dir: str = Field(alias="RawDataPath")
-    result_data_dir: str = Field(alias="ResultDataPath")
+    crops_data_dir: str = Field(alias="CropsDataPath")
 
 
 class RecognizeLicensePlatesRequest(BaseModel):

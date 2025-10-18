@@ -18,10 +18,10 @@ public class ModelInferenceService : IModelInferenceService
 
     public async Task CropToLicensePlatesAsync(
         string rawDataPath,
-        string resultDataPath,
+        string cropsDataPath,
         CancellationToken token)
     {
-        await _modelInferenceHttpService.CropToLicensePlatesAsync(rawDataPath, resultDataPath, token);
+        await _modelInferenceHttpService.CropToLicensePlatesAsync(rawDataPath, cropsDataPath, token);
     }
 
     public async Task RecognizeLicensePlatesAndSaveResults(

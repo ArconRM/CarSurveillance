@@ -16,12 +16,12 @@ public class ModelInferenceHttpService : IModelInferenceHttpService
         _httpClient = httpClient;
     }
 
-    public async Task CropToLicensePlatesAsync(string rawDataPath, string resultDataPath, CancellationToken token)
+    public async Task CropToLicensePlatesAsync(string rawDataPath, string cropsDataPath, CancellationToken token)
     {
-        var request = new DataInferenceRequest
+        var request = new DataCropInferenceRequest
         {
-            CropsDataPath = rawDataPath,
-            ResultDataPath = resultDataPath
+            RawDataPath = rawDataPath,
+            CropsDataPath = cropsDataPath,
         };
 
         var response = await _httpClient.PostAsJsonAsync("api/cropToLicensePlates", request,
@@ -32,7 +32,7 @@ public class ModelInferenceHttpService : IModelInferenceHttpService
     public async Task<IEnumerable<CarPassRecord>> RecognizeLicensePlates(
         string cropsDataPath, string resultDataPath, CancellationToken token)
     {
-        var request = new DataInferenceRequest
+        var request = new DataRecognizeInferenceRequest
         {
             CropsDataPath = cropsDataPath,
             ResultDataPath = resultDataPath
