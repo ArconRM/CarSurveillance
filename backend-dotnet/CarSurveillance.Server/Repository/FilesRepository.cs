@@ -88,6 +88,9 @@ public class FilesRepository : IFilesRepository
     {
         if (Directory.Exists(_dataCropsPath))
         {
+            if (!Directory.Exists(_dataCropsHistoryPath))
+                Directory.CreateDirectory(_dataCropsHistoryPath);
+
             var files = Directory.GetFiles(_dataCropsPath);
 
             foreach (var file in files) File.Move(file, Path.Combine(_dataCropsHistoryPath, Path.GetFileName(file)));
@@ -96,7 +99,7 @@ public class FilesRepository : IFilesRepository
         }
         else
         {
-            Directory.CreateDirectory(_dataRawPath);
+            Directory.CreateDirectory(_dataCropsPath);
         }
     }
 
