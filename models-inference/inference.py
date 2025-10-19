@@ -122,7 +122,7 @@ async def crop_to_license_plates(req: CropToLicensePlatesRequest):
     Run YOLO license plate detection on raw images and crop them
     """
     raw_data_dir = req.raw_data_dir
-    result_data_dir = req.result_data_dir
+    crops_data_dir = req.crops_data_dir
 
     frame_paths = []
     for ext in image_extensions:
@@ -131,7 +131,7 @@ async def crop_to_license_plates(req: CropToLicensePlatesRequest):
 
     print(f"Found {len(frame_paths)} frames in {raw_data_dir}")
 
-    os.makedirs(result_data_dir, exist_ok=True)
+    os.makedirs(crops_data_dir, exist_ok=True)
 
     crop_index = 0
     overall_index = 0
@@ -152,13 +152,13 @@ async def crop_to_license_plates(req: CropToLicensePlatesRequest):
             for box in r.boxes:
                 x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
                 crop = img[y1:y2, x1:x2].copy()
-                outp = os.path.join(result_data_dir, f"crop_{time}.png")
+                outp = os.path.join(crops_data_dir, f"crop_{time}.png")
                 cv2.imwrite(outp, crop)
                 crop_index += 1
 
         overall_index += 1
 
-    print("Detection+crop finished.", crop_index, "Crops saved to", result_data_dir)
+    print("Detection+crop finished.", crop_index, "Crops saved to", crops_data_dir)
     return {"status": "ok", "crops_saved": crop_index}
 
 
@@ -167,15 +167,15 @@ async def recognize_license_plates(req: RecognizeLicensePlatesRequest):
     """
     Run OCR on pre-cropped license plate images
     """
-    raw_data_dir = req.crops_data_dir
+    crops_data_dir = req.crops_data_dir
     result_data_dir = req.result_data_dir
 
     crop_paths = []
     for ext in image_extensions:
-        crop_paths.extend(glob.glob(os.path.join(raw_data_dir, ext)))
+        crop_paths.extend(glob.glob(os.path.join(crops_data_dir, ext)))
     crop_paths = sorted(crop_paths)
 
-    print(f"Found {len(crop_paths)} crops in {raw_data_dir}")
+    print(f"Found {len(crop_paths)} crops in {crops_data_dir}")
 
     os.makedirs(result_data_dir, exist_ok=True)
 
