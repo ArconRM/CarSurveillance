@@ -1,5 +1,5 @@
 using System.Globalization;
-using System.Text.Json;
+using Newtonsoft.Json;
 using CarSurveillance.Server.Dto.Responses;
 using CarSurveillance.Server.Entities;
 using CarSurveillance.Server.HttpService.Interfaces;
@@ -50,12 +50,7 @@ public class WeatherHttpService : IWeatherHttpService
 
     private WeatherRecord DeserializeWeatherData(string jsonResponse)
     {
-        var options = new JsonSerializerOptions
-        {
-            PropertyNameCaseInsensitive = true
-        };
-
-        var weatherData = JsonSerializer.Deserialize<WeatherApiResponse>(jsonResponse, options);
+        var weatherData = JsonConvert.DeserializeObject<WeatherApiResponse>(jsonResponse);
 
         return new WeatherRecord
         {
