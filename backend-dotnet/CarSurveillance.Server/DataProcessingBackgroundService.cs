@@ -39,11 +39,14 @@ public class DataProcessingBackgroundService : BackgroundService
 
         while (!stoppingToken.IsCancellationRequested)
         {
-            if (IsProcessingHours() && !hasAlreadyProcessed)
+            if (IsProcessingHours())
             {
-                await ProcessImagesAsync(stoppingToken);
-                filesService.CleanRawDataFolder();
-                hasAlreadyProcessed = true;
+                if (!hasAlreadyProcessed)
+                {
+                    await ProcessImagesAsync(stoppingToken);
+                    filesService.CleanRawDataFolder();
+                    hasAlreadyProcessed = true;
+                }
             }
             else
             {
