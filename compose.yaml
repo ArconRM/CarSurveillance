@@ -5,11 +5,16 @@
       context: ./backend-dotnet
       dockerfile: CarSurveillance.Server/Dockerfile
     environment:
+      - ConnectionStrings__DefaultConnection=Host=db;Port=5432;Database=CarSurveillanceDatabase;Username=carsurveillanceuser;Password=qWbYhFF6
+      - WEATHER_APP_URL=${WEATHER_APP_URL}
+      - WEATHER_APP_KEY=${WEATHER_APP_KEY}
+      - WEATHER_LAT=${WEATHER_LAT}
+      - WEATHER_LON=${WEATHER_LON}
       - ASPNETCORE_URLS=http://+:5035;
     ports:
       - "5035:5035"
     volumes:
-      - /media/sf_SharedWithUbuntu/CarSurveillanceData:/data
+      - ./data:/data
     depends_on:
       db:
         condition: service_started
@@ -23,13 +28,13 @@
     ports:
       - "8000:8000"
     volumes:
-      - /media/sf_SharedWithUbuntu/CarSurveillanceData:/data
+      - ./data:/data
     healthcheck:
       test: [ "CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" ]
       interval: 5s
       timeout: 2s
       retries: 5
-      start_period: 5s
+      start_period: 100s
 
   db:
     image: postgres:16
