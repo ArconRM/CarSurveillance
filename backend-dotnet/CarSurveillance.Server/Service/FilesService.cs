@@ -27,4 +27,9 @@ public class FilesService : IFilesService
     {
         _filesRepository.CleanRawDataFolder();
     }
+
+    public void MoveCropsToHistoryFolder()
+    {
+        _filesRepository.MoveCropsToHistoryFolder();
+    }
 }

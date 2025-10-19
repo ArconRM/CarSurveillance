@@ -8,5 +8,7 @@ public class DataOptions
 
     public string DataCropsRelativePath { get; set; }
 
+    public string DataCropsHistoryRelativePath { get; set; }
+
     public string DataResultRelativePath { get; set; }
 }

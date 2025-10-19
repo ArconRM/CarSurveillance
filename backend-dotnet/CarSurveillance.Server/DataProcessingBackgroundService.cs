@@ -45,6 +45,7 @@ public class DataProcessingBackgroundService : BackgroundService
                 {
                     await ProcessImagesAsync(stoppingToken);
                     filesService.CleanRawDataFolder();
+                    filesService.MoveCropsToHistoryFolder();
                     hasAlreadyProcessed = true;
                 }
             }

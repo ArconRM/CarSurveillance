@@ -9,11 +9,15 @@ namespace CarSurveillance.Server.Repository;
 public class FilesRepository : IFilesRepository
 {
     private readonly string _dataRawPath;
+    private readonly string _dataCropsPath;
+    private readonly string _dataCropsHistoryPath;
     private readonly ILogger<FilesRepository> _logger;
 
     public FilesRepository(IOptions<DataOptions> options, ILogger<FilesRepository> logger)
     {
         _dataRawPath = Path.Combine(options.Value.DataPath, options.Value.DataRawRelativePath);
+        _dataCropsPath = Path.Combine(options.Value.DataPath, options.Value.DataCropsRelativePath);
+        _dataCropsHistoryPath = Path.Combine(options.Value.DataPath, options.Value.DataCropsHistoryRelativePath);
         _logger = logger;
     }
 
@@ -73,6 +77,22 @@ public class FilesRepository : IFilesRepository
             foreach (var dir in directories) Directory.Delete(dir, true);
 
             _logger.LogInformation($"Cleaned {_dataRawPath}");
+        }
+        else
+        {
+            Directory.CreateDirectory(_dataRawPath);
+        }
+    }
+
+    public void MoveCropsToHistoryFolder()
+    {
+        if (Directory.Exists(_dataCropsPath))
+        {
+            var files = Directory.GetFiles(_dataCropsPath);
+
+            foreach (var file in files) File.Move(file, Path.Combine(_dataCropsHistoryPath, Path.GetFileName(file)));
+
+            _logger.LogInformation($"Moved crops from {_dataCropsPath} to {_dataCropsHistoryPath}");
         }
         else
         {

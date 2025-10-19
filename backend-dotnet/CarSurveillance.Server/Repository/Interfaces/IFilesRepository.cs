@@ -9,4 +9,6 @@ public interface IFilesRepository
     Task UploadBatchAsync(List<UploadFile> images, CancellationToken token);
 
     void CleanRawDataFolder();
+
+    void MoveCropsToHistoryFolder();
 }
