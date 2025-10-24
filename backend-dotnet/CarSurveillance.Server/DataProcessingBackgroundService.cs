@@ -102,7 +102,7 @@ public class DataProcessingBackgroundService : BackgroundService
     {
         var now = GetLocalTime();
         return now.Hour >= _dataProcessingOptions.UploadingHourEnd ||
-               now.Hour <= _dataProcessingOptions.UploadingHourStart;
+               now.Hour < _dataProcessingOptions.UploadingHourStart;
     }
 
     private DateTime GetLocalTime()
