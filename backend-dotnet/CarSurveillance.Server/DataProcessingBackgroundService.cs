@@ -51,8 +51,20 @@ public class DataProcessingBackgroundService : BackgroundService
             }
             else
             {
-                await weatherRecordService.SaveCurrentWeatherRecordFromApiAsync(stoppingToken);
-                hasAlreadyProcessed = false;
+                try
+                {
+                    var weatherRecord = await weatherRecordService.SaveCurrentWeatherRecordFromApiAsync(stoppingToken);
+                    hasAlreadyProcessed = false;
+                    _logger.LogInformation("Weather updated: {Temp}", weatherRecord.WeatherCondition);
+                }
+                catch (HttpRequestException ex)
+                {
+                    _logger.LogWarning(ex, "Weather API request failed with {ex}.", ex.Message);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Unexpected error in WeatherBackgroundService: {ex}.",  ex.Message);
+                }
             }
 
             await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);

@@ -59,7 +59,7 @@ builder.Services.AddHttpClient<IWeatherHttpService, WeatherHttpService>(client =
     var apiUrl = Environment.GetEnvironmentVariable("WEATHER_APP_URL");
 
     client.BaseAddress = new Uri(apiUrl);
-    client.Timeout = TimeSpan.FromMinutes(1);
+    client.Timeout = TimeSpan.FromSeconds(30);
 });
 
 builder.Services.AddScoped<IFilesRepository, FilesRepository>();
