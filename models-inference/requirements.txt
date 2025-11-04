@@ -4,5 +4,5 @@ uvicorn
 pathlib
 paddlepaddle
 paddleocr==2.10.0
-fast-plate-ocr
+fast-plate-ocr[onnx]
 realesrgan-ncnn-py
