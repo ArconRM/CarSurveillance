@@ -5,3 +5,4 @@ pathlib
 paddlepaddle
 paddleocr==2.10.0
 fast-plate-ocr
+realesrgan-ncnn-py
