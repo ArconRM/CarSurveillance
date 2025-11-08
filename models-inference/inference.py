@@ -1,6 +1,6 @@
 import json
 import math
-from PIL import Image, ImageEnhance, ImageFilter
+from PIL import Image, ImageEnhance
 from fastapi import FastAPI
 from paddleocr import PaddleOCR
 from pydantic import BaseModel, Field
@@ -9,6 +9,7 @@ import os, cv2, glob
 import torch
 from pathlib import Path
 from fast_plate_ocr import LicensePlateRecognizer
+from realesrgan_ncnn_py import Realesrgan
 
 fastplate_model = LicensePlateRecognizer('cct-s-v1-global-model')
 
@@ -26,6 +27,15 @@ ocr_model = PaddleOCR(
     rec=True,
     use_angle_cls=False
 )
+
+print("Loading AI upscaler model...")
+try:
+    upscaler = Realesrgan(gpuid=0)
+    print("AI Upscaler loaded on GPU.")
+except Exception as e:
+    print(f"GPU for upscaler failed ({e}), falling back to CPU.")
+    upscaler = Realesrgan(gpuid=-1)
+    print("AI Upscaler loaded on CPU.")
 
 
 class CropToLicensePlatesRequest(BaseModel):
@@ -92,24 +102,49 @@ def enhance_contrast(img: Image.Image, factor: float = 1.2) -> Image.Image:
     return enhancer.enhance(factor)
 
 
-def denoise_image(img: Image.Image) -> Image.Image:
-    return img.filter(ImageFilter.MedianFilter(size=3))
-
-
 def preprocess_crop(img_path: str, angle: float = 15.0):
+    """
+    Preprocesses a single crop:
+    1. Opens the image from disk.
+    2. Rotates and zooms.
+    3. Crops vertically.
+    4. Applies AI Super-Resolution to fix blur/artifacts.
+    5. Enhances contrast.
+    Returns a processed PIL Image.
+    """
     try:
         img = Image.open(img_path)
 
+        # 1. Rotate and Crop (Your old steps)
         img = rotate_and_zoom(img, angle)
         img = crop_center_vertical(img, keep_ratio=0.6)
-        img = enhance_contrast(img, factor=1.15)
-        img = denoise_image(img)
-        print(f"✓ Processed {img_path}")
 
-        return img
+        # 2. *** AI SUPER RESOLUTION ***
+        img = upscaler.process_pil(img)
+
+        # 3. Enhance contrast (on the new, clean, upscaled image)
+        img = enhance_contrast(img, factor=1.15)
+
+        print(f"✓ AI-Preprocessed {img_path}")
+
+        # Convert the PIL Image back to a NumPy array before returning
+        # This is crucial for PaddleOCR which expects numpy arrays or other specified types
+        import numpy as np
+        img_np = np.array(img)
+        if img_np.ndim == 3: # Check if it's HWC (Height, Width, Channels)
+            # PaddleOCR usually prefers HWC, but ensure it's compatible.
+            # If img is RGB, cv2.cvtColor might be needed later if BGR is expected by PaddleOCR internally,
+            # but often HWC RGB numpy array is fine for OCR models expecting image data.
+            pass # No conversion needed if PaddleOCR is set up for RGB/HWC
+        elif img_np.ndim == 2: # Grayscale
+            # Ensure it's 3D if OCR model expects color channels
+            img_np = cv2.cvtColor(img_np, cv2.COLOR_GRAY2RGB) # Or handle grayscale appropriately
+
+        return img_np # Return the NumPy array
 
     except Exception as e:
         print(f"Error processing {img_path}: {e}")
+        return None
 
 
 @app.get("/health")
