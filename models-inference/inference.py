@@ -1,15 +1,203 @@
 import json
 import math
+import numpy as np
+import os, cv2, glob
+import torch
+
 from PIL import Image, ImageEnhance
 from fastapi import FastAPI
 from paddleocr import PaddleOCR
 from pydantic import BaseModel, Field
 from ultralytics import YOLO
-import os, cv2, glob
-import torch
 from pathlib import Path
 from fast_plate_ocr import LicensePlateRecognizer
-from realesrgan_ncnn_py import Realesrgan
+from abc import ABC, abstractmethod
+
+
+class BaseUpscaler(ABC):
+    """Base class for all upscalers"""
+
+    @abstractmethod
+    def process_pil(self, img: Image.Image) -> Image.Image:
+        pass
+
+    @abstractmethod
+    def get_name(self) -> str:
+        pass
+
+
+class RealESRGANUpscaler(BaseUpscaler):
+    """Real-ESRGAN NCNN upscaler (works on Mac/Windows, fails in Docker)"""
+
+    def __init__(self, gpuid: int = 0):
+        try:
+            from realesrgan_ncnn_py import Realesrgan
+            self.upscaler = Realesrgan(gpuid=gpuid)
+            self.available = True
+            print(f"✓ Real-ESRGAN loaded (GPU: {gpuid})")
+        except Exception as e:
+            print(f"✗ Real-ESRGAN unavailable: {e}")
+            self.available = False
+
+    def process_pil(self, img: Image.Image) -> Image.Image:
+        if not self.available:
+            raise RuntimeError("Real-ESRGAN not available")
+        return self.upscaler.process_pil(img)
+
+    def get_name(self) -> str:
+        return "Real-ESRGAN"
+
+
+def process_pil(self, img: Image.Image) -> Image.Image:
+    if not self.available:
+        raise RuntimeError("Real-ESRGAN not available")
+
+    # Convert PIL to numpy array (RGB)
+    img_np = np.array(img)
+
+    # Upscale (output is BGR numpy array)
+    output, _ = self.upsampler.enhance(img_np, outscale=4)
+
+    # Convert BGR back to RGB PIL Image
+    output_rgb = cv2.cvtColor(output, cv2.COLOR_BGR2RGB)
+    return Image.fromarray(output_rgb)
+
+
+def get_name(self) -> str:
+    return "Real-ESRGAN"
+
+
+class LanczosUpscaler(BaseUpscaler):
+    """Lanczos interpolation upscaler (fast, works everywhere)"""
+
+    def __init__(self, scale: int = 4):
+        self.scale = scale
+        self.available = True
+        print(f"✓ Lanczos upscaler loaded (x{scale})")
+
+    def process_pil(self, img: Image.Image) -> Image.Image:
+        w, h = img.size
+        new_size = (w * self.scale, h * self.scale)
+        return img.resize(new_size, Image.Resampling.LANCZOS)
+
+    def get_name(self) -> str:
+        return f"Lanczos-x{self.scale}"
+
+
+class EnhancedLanczosUpscaler(BaseUpscaler):
+    """Lanczos + sharpening + denoising (best traditional method for plates)"""
+
+    def __init__(self, scale: int = 4):
+        self.scale = scale
+        self.available = True
+        print(f"✓ Enhanced Lanczos upscaler loaded (x{scale})")
+
+    def process_pil(self, img: Image.Image) -> Image.Image:
+        # Convert to OpenCV for preprocessing
+        img_cv = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
+
+        # Denoise before upscaling
+        denoised = cv2.fastNlMeansDenoisingColored(img_cv, None, 10, 10, 7, 21)
+
+        # Upscale with Lanczos
+        h, w = denoised.shape[:2]
+        upscaled = cv2.resize(denoised, (w * self.scale, h * self.scale),
+                              interpolation=cv2.INTER_LANCZOS4)
+
+        # Sharpen
+        kernel = np.array([[-1, -1, -1],
+                           [-1, 9, -1],
+                           [-1, -1, -1]])
+        sharpened = cv2.filter2D(upscaled, -1, kernel)
+
+        # Convert back to PIL
+        result_rgb = cv2.cvtColor(sharpened, cv2.COLOR_BGR2RGB)
+        return Image.fromarray(result_rgb)
+
+    def get_name(self) -> str:
+        return f"Enhanced-Lanczos-x{self.scale}"
+
+
+class NoUpscaler(BaseUpscaler):
+    """No upscaling - baseline comparison"""
+
+    def __init__(self):
+        self.available = True
+        print("✓ No upscaling (baseline)")
+
+    def process_pil(self, img: Image.Image) -> Image.Image:
+        return img
+
+    def get_name(self) -> str:
+        return "None"
+
+
+class UpscalerManager:
+    """Manages multiple upscalers with automatic fallback"""
+
+    def __init__(self, preferred_method: str = "auto"):
+        self.upscalers = []
+        self.current_upscaler = None
+        self.preferred_method = preferred_method
+
+        # Try to initialize upscalers in order of preference
+        self._initialize_upscalers()
+
+    def _initialize_upscalers(self):
+        """Initialize all available upscalers"""
+
+        # Try Real-ESRGAN first (best quality)
+        try:
+            upscaler = RealESRGANUpscaler()
+            if upscaler.available:
+                self.upscalers.append(upscaler)
+        except Exception as e:
+            print(f"Skipping Real-ESRGAN: {e}")
+
+        # Enhanced Lanczos (fast, decent quality for plates)
+        self.upscalers.append(EnhancedLanczosUpscaler())
+
+        # Standard Lanczos (fast fallback)
+        self.upscalers.append(LanczosUpscaler())
+
+        # No upscaling (baseline)
+        self.upscalers.append(NoUpscaler())
+
+        # Set current upscaler based on preference
+        if self.preferred_method == "auto":
+            self.current_upscaler = self.upscalers[0]
+        else:
+            for upscaler in self.upscalers:
+                if self.preferred_method.lower() in upscaler.get_name().lower():
+                    self.current_upscaler = upscaler
+                    break
+            if not self.current_upscaler:
+                self.current_upscaler = self.upscalers[0]
+
+        print(f"\n{'=' * 60}")
+        print(f"Active Upscaler: {self.current_upscaler.get_name()}")
+        print(f"Available Upscalers: {[u.get_name() for u in self.upscalers]}")
+        print(f"{'=' * 60}\n")
+
+    def process_pil(self, img: Image.Image) -> Image.Image:
+        """Process image with current upscaler"""
+        return self.current_upscaler.process_pil(img)
+
+    def set_upscaler(self, method: str):
+        """Switch to a different upscaler"""
+        for upscaler in self.upscalers:
+            if method.lower() in upscaler.get_name().lower():
+                self.current_upscaler = upscaler
+                print(f"Switched to: {upscaler.get_name()}")
+                return True
+        print(f"Upscaler '{method}' not found")
+        return False
+
+    def get_available_methods(self) -> list:
+        """Get list of available upscaling methods"""
+        return [u.get_name() for u in self.upscalers]
+
+
 
 fastplate_model = LicensePlateRecognizer('cct-s-v1-global-model')
 
@@ -28,15 +216,7 @@ ocr_model = PaddleOCR(
     use_angle_cls=False
 )
 
-print("Loading AI upscaler model...")
-try:
-    upscaler = Realesrgan(gpuid=0)
-    print("AI Upscaler loaded on GPU.")
-except Exception as e:
-    print(f"GPU for upscaler failed ({e}), falling back to CPU.")
-    upscaler = Realesrgan(gpuid=-1)
-    print("AI Upscaler loaded on CPU.")
-
+upscaler_manager = UpscalerManager()
 
 class CropToLicensePlatesRequest(BaseModel):
     raw_data_dir: str = Field(alias="RawDataPath")
@@ -102,50 +282,46 @@ def enhance_contrast(img: Image.Image, factor: float = 1.2) -> Image.Image:
     return enhancer.enhance(factor)
 
 
-def preprocess_crop(img_path: str, angle: float = 15.0):
+def preprocess_crop(img_path: str, upscaler_name: str = None, angle: float = 15.0):
     """
-    Preprocesses a single crop:
+    Preprocesses a single crop with optional upscaler selection:
     1. Opens the image from disk.
     2. Rotates and zooms.
     3. Crops vertically.
-    4. Applies AI Super-Resolution to fix blur/artifacts.
+    4. Applies upscaling (if upscaler_name is provided).
     5. Enhances contrast.
-    Returns a processed PIL Image.
+    Returns a processed numpy array for OCR.
     """
     try:
         img = Image.open(img_path)
 
-        # 1. Rotate and Crop (Your old steps)
+        # 1. Rotate and Crop
         img = rotate_and_zoom(img, angle)
         img = crop_center_vertical(img, keep_ratio=0.6)
 
-        # 2. *** AI SUPER RESOLUTION ***
-        img = upscaler.process_pil(img)
+        # 2. Apply upscaling (if specified)
+        if upscaler_name:
+            # Temporarily switch to the specified upscaler
+            original_upscaler = upscaler_manager.current_upscaler
+            upscaler_manager.set_upscaler(upscaler_name)
+            img = upscaler_manager.process_pil(img)
+            upscaler_manager.current_upscaler = original_upscaler
 
-        # 3. Enhance contrast (on the new, clean, upscaled image)
+        # 3. Enhance contrast
         img = enhance_contrast(img, factor=1.15)
 
-        print(f"✓ AI-Preprocessed {img_path}")
-
-        # Convert the PIL Image back to a NumPy array before returning
-        # This is crucial for PaddleOCR which expects numpy arrays or other specified types
+        # Convert to numpy array for OCR
         import numpy as np
         img_np = np.array(img)
-        if img_np.ndim == 3: # Check if it's HWC (Height, Width, Channels)
-            # PaddleOCR usually prefers HWC, but ensure it's compatible.
-            # If img is RGB, cv2.cvtColor might be needed later if BGR is expected by PaddleOCR internally,
-            # but often HWC RGB numpy array is fine for OCR models expecting image data.
-            pass # No conversion needed if PaddleOCR is set up for RGB/HWC
-        elif img_np.ndim == 2: # Grayscale
-            # Ensure it's 3D if OCR model expects color channels
-            img_np = cv2.cvtColor(img_np, cv2.COLOR_GRAY2RGB) # Or handle grayscale appropriately
 
-        return img_np # Return the NumPy array
+        if img_np.ndim == 2:  # Grayscale
+            img_np = cv2.cvtColor(img_np, cv2.COLOR_GRAY2RGB)
+
+        return img_np
 
     except Exception as e:
-        print(f"Error processing {img_path}: {e}")
+        print(f"Error processing {img_path} with upscaler {upscaler_name}: {e}")
         return None
-
 
 @app.get("/health")
 def health():
@@ -201,7 +377,7 @@ async def crop_to_license_plates(req: CropToLicensePlatesRequest):
 @app.post("/api/recognizeLicensePlates")
 async def recognize_license_plates(req: RecognizeLicensePlatesRequest):
     """
-    Run OCR on pre-cropped license plate images
+    Run OCR on pre-cropped license plate images with all upscalers
     """
     crops_data_dir = req.crops_data_dir
     result_data_dir = req.result_data_dir
@@ -216,44 +392,69 @@ async def recognize_license_plates(req: RecognizeLicensePlatesRequest):
     os.makedirs(result_data_dir, exist_ok=True)
 
     results = []
+    available_upscalers = upscaler_manager.get_available_methods()
+
     for idx, cp in enumerate(crop_paths):
-        img = cv2.imread(cp)
-        if img is None:
-            continue
-
-        processed_img = preprocess_crop(cp)
-        if processed_img is None:
-            continue
-
-        result_raw = ocr_model.ocr(img)
-        try:
-            text_raw, confidence_raw = result_raw[0][0][1]
-        except:
-            continue
-
-        result_processed = ocr_model.ocr(processed_img)
-        try:
-            text_processed, confidence_processed = result_processed[0][0][1]
-        except:
+        img_raw = cv2.imread(cp)
+        if img_raw is None:
             continue
 
         filename = Path(cp).name
         time = Path(cp).stem.split("_")[1].split("-")[0]
-        results.append({
+
+        result_raw = ocr_model.ocr(img_raw)
+        try:
+            text_raw, confidence_raw = result_raw[0][0][1]
+        except:
+            text_raw, confidence_raw = "N/A", 0.0
+
+        result_entry = {
             "time": time,
             "filename": filename,
             "plate_text_raw": text_raw,
             "confidence_raw": float(confidence_raw),
-            "plate_text_processed": text_processed,
-            "confidence_processed": float(confidence_processed),
-        })
-        print(f"[{idx + 1}/{len(crop_paths)}] {filename}: {text_raw} (conf: {confidence_raw:.3f}), {text_processed} (conf: {confidence_processed:.3f})")
+        }
 
+        for upscaler_name in available_upscalers:
+            try:
+                # Preprocess with specific upscaler
+                processed_img = preprocess_crop(cp, upscaler_name=upscaler_name)
+
+                if processed_img is None:
+                    continue
+
+                # Run OCR on processed image
+                result_processed = ocr_model.ocr(processed_img)
+                try:
+                    text_processed, confidence_processed = result_processed[0][0][1]
+                except:
+                    text_processed, confidence_processed = "N/A", 0.0
+
+                # Create field names based on upscaler name
+                field_suffix = upscaler_name.lower().replace("-", "_").replace(" ", "_")
+
+                result_entry[f"plate_text_processed_{field_suffix}"] = text_processed
+                result_entry[f"confidence_processed_{field_suffix}"] = float(confidence_processed)
+
+                print(f"  [{upscaler_name}] {text_processed} (conf: {confidence_processed:.3f})")
+
+            except Exception as e:
+                print(f"  [{upscaler_name}] Error: {e}")
+                field_suffix = upscaler_name.lower().replace("-", "_").replace(" ", "_")
+                result_entry[f"plate_text_processed_{field_suffix}"] = "ERROR"
+                result_entry[f"confidence_processed_{field_suffix}"] = 0.0
+
+        results.append(result_entry)
+
+        print(f"[{idx + 1}/{len(crop_paths)}] {filename}: RAW={text_raw} (conf: {confidence_raw:.3f})")
+
+    # Save results
     result_file = os.path.join(result_data_dir, "recognition_results.json")
     with open(result_file, 'w', encoding='utf-8') as f:
         json.dump(results, f, indent=2, ensure_ascii=False)
 
-    print(f"Recognition finished. Results saved to {result_file}")
+    print(f"\nRecognition finished. Results saved to {result_file}")
+
     return {
         "status": "ok",
         "total_processed": len(results),
