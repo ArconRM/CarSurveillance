@@ -16,8 +16,7 @@
     volumes:
       - ./data:/data
     depends_on:
-      db:
-        condition: service_started
+      - db
 
   carsurveillance.modelsinference:
     build:
