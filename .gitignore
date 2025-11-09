@@ -8,3 +8,4 @@ backend-dotnet/riderModule.iml
 backend-dotnet/_ReSharper.Caches/
 app-ios/CarSurveillance.App/CarSurveillance.App.xcodeproj/xcuserdata
 app-ios/CarSurveillance.App/CarSurveillance.App.xcodeproj/project.xcworkspace/xcuserdata
+app-ios/CarSurveillance.App/CarSurveillance.App/Config.swift
