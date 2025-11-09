@@ -1,3 +1,4 @@
+using System.Globalization;
 using CarSurveillance.Server;
 using CarSurveillance.Server.HttpService;
 using CarSurveillance.Server.HttpService.Interfaces;
@@ -33,8 +34,8 @@ builder.Services.Configure<WeatherApiOptions>(options =>
 {
     options.AppUrl = Environment.GetEnvironmentVariable("WEATHER_APP_URL");
     options.AppKey = Environment.GetEnvironmentVariable("WEATHER_APP_KEY");
-    options.Lat = double.Parse(Environment.GetEnvironmentVariable("WEATHER_LAT"));
-    options.Lon = double.Parse(Environment.GetEnvironmentVariable("WEATHER_LON"));
+    options.Lat = double.Parse(Environment.GetEnvironmentVariable("WEATHER_LAT"), CultureInfo.InvariantCulture);
+    options.Lon = double.Parse(Environment.GetEnvironmentVariable("WEATHER_LON"), CultureInfo.InvariantCulture);
 });
 
 builder.WebHost.ConfigureKestrel(serverOptions => { serverOptions.Limits.MaxRequestBodySize = 1048576000; });
