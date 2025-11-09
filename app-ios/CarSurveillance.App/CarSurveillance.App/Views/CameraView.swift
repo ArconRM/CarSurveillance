@@ -42,6 +42,9 @@ struct CameraView: View {
                             Text("Status: \(recordingViewModel.uploadStatus)")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
+                                .onTapGesture {
+                                    showBlackScreen.toggle()
+                                }
                         }
                         .padding(.horizontal)
                         .padding(.top)
