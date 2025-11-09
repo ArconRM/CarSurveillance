@@ -41,13 +41,13 @@ public class DataProcessingBackgroundService : BackgroundService
         {
             if (IsProcessingHours())
             {
-                if (!hasAlreadyProcessed)
-                {
-                    await ProcessImagesAsync(stoppingToken);
-                    filesService.CleanRawDataFolder();
-                    filesService.MoveCropsToHistoryFolder();
-                    hasAlreadyProcessed = true;
-                }
+                // if (!hasAlreadyProcessed)
+                // {
+                //     await ProcessImagesAsync(stoppingToken);
+                //     filesService.CleanRawDataFolder();
+                //     filesService.MoveCropsToHistoryFolder();
+                //     hasAlreadyProcessed = true;
+                // }
             }
             else
             {
