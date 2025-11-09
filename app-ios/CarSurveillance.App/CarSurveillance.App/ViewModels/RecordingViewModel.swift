@@ -21,9 +21,9 @@ class RecordingViewModel: ObservableObject {
     private var frameBuffer: [Data] = []
     
     private let framesPerSecond: Double = 1.0
-    private let uploadIntervalMinutes: Double = 1.0
-    private let apiUploadEndpoint = "http://192.168.1.46:5035/api/Data/UploadBatch"
-    private let apiCanSendEndpoint = "http://192.168.1.46:5035/api/Data/CanSend"
+    private let uploadIntervalMinutes: Double = 0.3
+    private let apiUploadEndpoint = Config.apiUploadEndpoint
+    private let apiCanSendEndpoint = Config.apiCanSendEndpoint
     
     init(frameViewModel: FrameViewModel) {
         self.frameViewModel = frameViewModel
@@ -95,6 +95,7 @@ class RecordingViewModel: ObservableObject {
             guard let canSend = try? JSONDecoder().decode(Bool.self, from: data), canSend
             else {
                 print("Not sending time")
+                self.cleanupFrameFiles()
                 return
             }
             
