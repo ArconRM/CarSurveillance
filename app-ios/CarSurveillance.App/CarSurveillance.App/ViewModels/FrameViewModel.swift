@@ -17,8 +17,8 @@ class FrameViewModel: NSObject, ObservableObject {
     @Published var currentZoom: CGFloat = 2.0
     @Published var minISO: Float = 100.0
     @Published var maxISO: Float = 200.0
-    let minShutterSpeed: Float = 1/5000
-    let maxShutterSpeed: Float = 1/900
+    let minShutterSpeed: Float = 1/6000
+    let maxShutterSpeed: Float = 1/500
     @Published var minZoom: CGFloat = 1.0
     @Published var maxZoom: CGFloat = 5.0
     
@@ -55,25 +55,40 @@ class FrameViewModel: NSObject, ObservableObject {
     }
     
     func setupCaptureSession() {
-        let videoOutput = AVCaptureVideoDataOutput()
-        
         guard permissionGranted else { return }
-        guard let videoDevice = AVCaptureDevice.default(.builtInTelephotoCamera, for: .video, position: .back) else { return }
         
+        captureSession.beginConfiguration()
+        
+        if captureSession.canSetSessionPreset(.hd4K3840x2160) {
+            captureSession.sessionPreset = .hd4K3840x2160
+        } else if captureSession.canSetSessionPreset(.photo) {
+            captureSession.sessionPreset = .photo
+        } else {
+            captureSession.sessionPreset = .high
+        }
+        
+        guard let videoDevice = AVCaptureDevice.default(.builtInTelephotoCamera, for: .video, position: .back) else { return }
         self.captureDevice = videoDevice
         
-        guard let videoDeviceInput = try? AVCaptureDeviceInput(device: videoDevice) else { return }
-        guard captureSession.canAddInput(videoDeviceInput) else { return }
+        guard let videoDeviceInput = try? AVCaptureDeviceInput(device: videoDevice),
+              captureSession.canAddInput(videoDeviceInput) else { return }
         captureSession.addInput(videoDeviceInput)
         
+        let videoOutput = AVCaptureVideoDataOutput()
+        videoOutput.videoSettings = [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
+        ]
         videoOutput.setSampleBufferDelegate(self, queue: DispatchQueue(label: "sampleBufferQueue"))
+        guard captureSession.canAddOutput(videoOutput) else { return }
         captureSession.addOutput(videoOutput)
         
         videoOutput.connection(with: .video)?.videoOrientation = .landscapeRight
         
-        // Configure camera for manual controls AFTER session is set up
+        captureSession.commitConfiguration()
+        
         configureCameraForManualControls()
     }
+
     
     private func configureCameraForManualControls() {
         guard let device = captureDevice else {
@@ -112,7 +127,7 @@ class FrameViewModel: NSObject, ObservableObject {
                 let initialISO = min(max(222, minISOValue), maxISOValue)
                 
                 // For shutter speed, ensure we're within the device's actual limits
-                let desiredShutterSpeed: Float = 1.0/1017.0  // 1/60th second
+                let desiredShutterSpeed: Float = 1.0/1017.0
                 let initialShutterSpeed: Float
                 
                 if desiredShutterSpeed < minShutterSpeedValue {
