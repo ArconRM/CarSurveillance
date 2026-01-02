@@ -87,11 +87,13 @@ def create_api() -> FastAPI:
         all_detections = []
         crop_index = 0
         overall_index = 0
+        
         for fp in frame_paths:
             time = Path(fp).stem.split("_")[1]
             print("Processing frame #", overall_index, time)
             img = cv2.imread(fp)
             if img is None:
+                print(f"Warning: Could not read image {fp}")
                 continue
 
             results = detection_model.predict(
@@ -100,13 +102,49 @@ def create_api() -> FastAPI:
                 save=False,
                 device='mps'
             )
+            
             for r in results:
                 for i, box in enumerate(r.boxes):
+                    # Получаем координаты с проверкой
                     x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
-                    crop = img[y1 - 30:y2 + 30, x1 - 30:x2 + 30].copy()
-                    crop_filename = f"crop_{time}.png"
+                    
+                    # Проверяем, что координаты корректны
+                    if x1 >= x2 or y1 >= y2:
+                        print(f"Warning: Invalid bbox coordinates: ({x1}, {y1}, {x2}, {y2})")
+                        continue
+                    
+                    # Получаем размеры изображения для проверки границ
+                    img_height, img_width = img.shape[:2]
+                    
+                    # Вычисляем координаты с отступами, ограничивая их границами изображения
+                    crop_x1 = max(0, x1 - 30)
+                    crop_y1 = max(0, y1 - 30)
+                    crop_x2 = min(img_width, x2 + 30)
+                    crop_y2 = min(img_height, y2 + 30)
+                    
+                    # Проверяем, что область не пустая
+                    if crop_x1 >= crop_x2 or crop_y1 >= crop_y2:
+                        print(f"Warning: Crop area is empty after boundary check")
+                        continue
+                    
+                    # Вырезаем область
+                    crop = img[crop_y1:crop_y2, crop_x1:crop_x2].copy()
+                    
+                    # Проверяем, что crop не пустой
+                    if crop.size == 0:
+                        print(f"Warning: Empty crop for bbox ({x1}, {y1}, {x2}, {y2})")
+                        continue
+                    
+                    # Создаем уникальное имя файла для каждого кадра и детекции
+                    crop_filename = f"crop_{time}_{crop_index}.png"
                     outp = os.path.join(crops_data_dir, crop_filename)
-                    cv2.imwrite(outp, crop)
+                    
+                    # Сохраняем изображение
+                    success = cv2.imwrite(outp, crop)
+                    if not success:
+                        print(f"Error: Failed to save crop to {outp}")
+                        continue
+                    
                     crop_index += 1
 
                     detection_info = {
@@ -119,9 +157,13 @@ def create_api() -> FastAPI:
                             "x2": x2,
                             "y2": y2,
                             "width": x2 - x1,
-                            "height": y2 - y1
+                            "height": y2 - y1,
+                            "crop_x1": crop_x1,
+                            "crop_y1": crop_y1,
+                            "crop_x2": crop_x2,
+                            "crop_y2": crop_y2
                         },
-                        "confidence": box.conf.cpu().numpy().tolist(),
+                        "confidence": float(box.conf.cpu().numpy()[0]),  # Преобразуем в float
                         "speed": r.speed,
                     }
                     all_detections.append(detection_info)
@@ -135,7 +177,6 @@ def create_api() -> FastAPI:
             json.dump(all_detections, f, indent=2, ensure_ascii=False)
 
         return {"status": "ok", "crops_saved": crop_index}
-
 
 
 
