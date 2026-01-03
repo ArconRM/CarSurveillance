@@ -1,10 +1,13 @@
+import asyncio
+import concurrent.futures
 import json
 import os
 import glob
 from pathlib import Path
-from typing import List
+from typing import List, Tuple
 
 import cv2
+import numpy as np
 import torch
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
@@ -32,11 +35,6 @@ class RecognizeLicensePlatesRequest(BaseModel):
     crops_data_dir: str = Field(alias="CropsDataPath")
     result_data_dir: str = Field(alias="ResultDataPath")
 
-#
-# class FastPlateOCRRequest(BaseModel):
-#     crops_data_dir: str = Field(alias="CropsDataPath")
-#     result_data_dir: str = Field(alias="ResultDataPath")
-
 
 def create_api() -> FastAPI:
     """Factory function to create FastAPI app with dependencies"""
@@ -46,7 +44,7 @@ def create_api() -> FastAPI:
     detection_model_yolov5 = YOLO("models/best_v5.pt")
     detection_model_yolov8 = YOLO("models/best_v8.pt")
     detection_model_yolov11 = YOLO("models/best_v11.pt")
-    # detection_model_detectron2 = YOLO(detection_model_path)
+    # detection_model_detectron2 = (detection_model_path)
 
     ocr_model = PaddleOCR(lang='en', det=False, rec=True, use_angle_cls=False)
     upscaler_manager = UpscalerManager()
@@ -58,8 +56,12 @@ def create_api() -> FastAPI:
     @app.post("/api/cropToLicensePlatesYolo")
     async def crop_to_license_plates_yolo(req: CropToLicensePlatesRequest):
         """
-        Run YOLO license plate detection on raw images and crop them
+        Run YOLO license plate detection on raw images and crop them with parallelism
         """
+
+        BATCH_SIZE = 32
+        MAX_WORKERS = 4
+        DEVICE = "cuda" if torch.cuda.is_available() else ("mps" if torch.mps.is_available() else "cpu")
 
         if req.model == "yolov5":
             detection_model = detection_model_yolov5
@@ -67,111 +69,132 @@ def create_api() -> FastAPI:
             detection_model = detection_model_yolov8
         elif req.model == "yolov11":
             detection_model = detection_model_yolov11
-        # elif req.model == "detectron2":
-        #     detection_model = detection_model_detectron2
         else:
             detection_model = detection_model_yolov8
 
         raw_data_dir = req.raw_data_dir
         crops_data_dir = req.crops_data_dir
 
+        # Gather file paths
         frame_paths = []
         for ext in image_extensions:
             frame_paths.extend(glob.glob(os.path.join(raw_data_dir, "**", ext), recursive=True))
         frame_paths = sorted(frame_paths)
 
         print(f"Found {len(frame_paths)} frames in {raw_data_dir}")
-
         os.makedirs(crops_data_dir, exist_ok=True)
 
         all_detections = []
         crop_index = 0
-        overall_index = 0
-        
-        for fp in frame_paths:
-            time = Path(fp).stem.split("_")[1]
-            print("Processing frame #", overall_index, time)
-            img = cv2.imread(fp)
-            if img is None:
-                print(f"Warning: Could not read image {fp}")
+
+        def read_image_batch(paths: List[str]) -> List[Tuple[str, np.ndarray]]:
+            images = []
+            for path in paths:
+                img = cv2.imread(path)
+                if img is not None:
+                    images.append((path, img))
+                else:
+                    print(f"Warning: Could not read image {path}")
+            return images
+
+        def save_crops_batch(crop_data_list):
+            results = []
+            for crop_data in crop_data_list:
+                success = cv2.imwrite(crop_data['path'], crop_data['image'])
+                if success:
+                    results.append(crop_data['info'])
+                else:
+                    print(f"Error: Failed to save crop to {crop_data['path']}")
+            return results
+
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS)
+
+        # Process batches
+        for batch_start in range(0, len(frame_paths), BATCH_SIZE):
+            batch_end = min(batch_start + BATCH_SIZE, len(frame_paths))
+            batch_paths = frame_paths[batch_start:batch_end]
+
+            print(f"Processing batch {batch_start // BATCH_SIZE + 1}/{(len(frame_paths) - 1) // BATCH_SIZE + 1}")
+
+            loop = asyncio.get_event_loop()
+            images_data = await loop.run_in_executor(executor, read_image_batch, batch_paths)
+
+            if not images_data:
                 continue
 
+            paths_batch = [path for path, _ in images_data]
+            images_batch = [img for _, img in images_data]
+
             results = detection_model.predict(
-                source=img,
-                batch=10,
+                source=images_batch,
+                batch=len(images_batch),
                 save=False,
-                device='mps'
+                device=DEVICE,
+                verbose=True,
+                half=True,
             )
-            
-            for r in results:
-                for i, box in enumerate(r.boxes):
-                    # Получаем координаты с проверкой
+
+            crops_to_save = []
+
+            for idx, (fp, img, r) in enumerate(zip(paths_batch, images_batch, results)):
+                time = Path(fp).stem.split("_")[1]
+                img_height, img_width = img.shape[:2]
+
+                for box in r.boxes:
                     x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
-                    
-                    # Проверяем, что координаты корректны
+
                     if x1 >= x2 or y1 >= y2:
-                        print(f"Warning: Invalid bbox coordinates: ({x1}, {y1}, {x2}, {y2})")
                         continue
-                    
-                    # Получаем размеры изображения для проверки границ
-                    img_height, img_width = img.shape[:2]
-                    
-                    # Вычисляем координаты с отступами, ограничивая их границами изображения
+
                     crop_x1 = max(0, x1 - 30)
                     crop_y1 = max(0, y1 - 30)
                     crop_x2 = min(img_width, x2 + 30)
                     crop_y2 = min(img_height, y2 + 30)
-                    
-                    # Проверяем, что область не пустая
+
                     if crop_x1 >= crop_x2 or crop_y1 >= crop_y2:
-                        print(f"Warning: Crop area is empty after boundary check")
                         continue
-                    
-                    # Вырезаем область
+
                     crop = img[crop_y1:crop_y2, crop_x1:crop_x2].copy()
-                    
-                    # Проверяем, что crop не пустой
+
                     if crop.size == 0:
-                        print(f"Warning: Empty crop for bbox ({x1}, {y1}, {x2}, {y2})")
                         continue
-                    
-                    # Создаем уникальное имя файла для каждого кадра и детекции
+
                     crop_filename = f"crop_{time}_{crop_index}.png"
                     outp = os.path.join(crops_data_dir, crop_filename)
-                    
-                    # Сохраняем изображение
-                    success = cv2.imwrite(outp, crop)
-                    if not success:
-                        print(f"Error: Failed to save crop to {outp}")
-                        continue
-                    
-                    crop_index += 1
 
                     detection_info = {
                         "frame": fp,
                         "crop_index": crop_index,
                         "crop_filename": crop_filename,
                         "coordinates": {
-                            "x1": x1,
-                            "y1": y1,
-                            "x2": x2,
-                            "y2": y2,
-                            "width": x2 - x1,
-                            "height": y2 - y1,
-                            "crop_x1": crop_x1,
-                            "crop_y1": crop_y1,
-                            "crop_x2": crop_x2,
-                            "crop_y2": crop_y2
+                            "x1": x1, "y1": y1, "x2": x2, "y2": y2,
+                            "width": x2 - x1, "height": y2 - y1,
+                            "crop_x1": crop_x1, "crop_y1": crop_y1,
+                            "crop_x2": crop_x2, "crop_y2": crop_y2
                         },
-                        "confidence": float(box.conf.cpu().numpy()[0]),  # Преобразуем в float
+                        "confidence": float(box.conf.cpu().numpy()[0]),
                         "speed": r.speed,
                     }
-                    all_detections.append(detection_info)
 
-            overall_index += 1
+                    crops_to_save.append({
+                        'path': outp,
+                        'image': crop,
+                        'info': detection_info
+                    })
 
-        print("Detection+crop finished.", crop_index, "Crops saved to", crops_data_dir)
+                    crop_index += 1
 
+            if crops_to_save:
+                saved_detections = await loop.run_in_executor(
+                    executor, save_crops_batch, crops_to_save
+                )
+                all_detections.extend(saved_detections)
+
+        executor.shutdown(wait=True)
+
+        print(f"Detection+crop finished. {crop_index} crops saved to {crops_data_dir}")
+
+        # Сохраняем результаты
         result_file = os.path.join(crops_data_dir, "yolo_detection_results.json")
         with open(result_file, 'w', encoding='utf-8') as f:
             json.dump(all_detections, f, indent=2, ensure_ascii=False)
