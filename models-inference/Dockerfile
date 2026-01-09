@@ -1,11 +1,18 @@
 FROM inference-dependencies:latest
+
 WORKDIR /app
+
+ENV PYTHONUNBUFFERED=1
+
+RUN pip install jupyter notebook
 
 COPY . .
 
 RUN ulimit -n 65535
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+EXPOSE 8888
+
+CMD bash -c "jupyter notebook --ip=0.0.0.0 --port=8888 --no-browser --allow-root --NotebookApp.token='' --NotebookApp.password='' & uvicorn main:app --host 0.0.0.0 --port 8000"
 
 
 # Stage 1: Dependencies

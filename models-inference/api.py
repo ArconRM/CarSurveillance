@@ -43,8 +43,8 @@ def create_api() -> FastAPI:
     # Initialize models
     detection_model_yolov5 = YOLO("models/best_v5.pt")
     detection_model_yolov8 = YOLO("models/best_v8.pt")
+    detection_model_yolov8l = YOLO("models/best_v8l.pt")
     detection_model_yolov11 = YOLO("models/best_v11.pt")
-    # detection_model_detectron2 = (detection_model_path)
 
     ocr_model = PaddleOCR(lang='en', det=False, rec=True, use_angle_cls=False)
     upscaler_manager = UpscalerManager()
@@ -58,8 +58,11 @@ def create_api() -> FastAPI:
         """
         Run YOLO license plate detection on raw images and crop them with parallelism
         """
+        from tqdm import tqdm
+        import sys
+        import time as time_module
 
-        BATCH_SIZE = 32
+        BATCH_SIZE = 64
         MAX_WORKERS = 4
         DEVICE = "cuda" if torch.cuda.is_available() else ("mps" if torch.mps.is_available() else "cpu")
 
@@ -67,6 +70,8 @@ def create_api() -> FastAPI:
             detection_model = detection_model_yolov5
         elif req.model == "yolov8":
             detection_model = detection_model_yolov8
+        elif req.model == "yolov8l":
+            detection_model = detection_model_yolov8l
         elif req.model == "yolov11":
             detection_model = detection_model_yolov11
         else:
@@ -94,7 +99,7 @@ def create_api() -> FastAPI:
                 if img is not None:
                     images.append((path, img))
                 else:
-                    print(f"Warning: Could not read image {path}")
+                    print(f"Warning: Could not read image {path}", flush=True)
             return images
 
         def save_crops_batch(crop_data_list):
@@ -104,37 +109,59 @@ def create_api() -> FastAPI:
                 if success:
                     results.append(crop_data['info'])
                 else:
-                    print(f"Error: Failed to save crop to {crop_data['path']}")
+                    print(f"Error: Failed to save crop to {crop_data['path']}", flush=True)
             return results
 
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS)
 
+        total_batches = (len(frame_paths) + BATCH_SIZE - 1) // BATCH_SIZE
+        start_time = time_module.time()
+        
+        pbar = tqdm(
+            total=len(frame_paths),
+            desc=f"Processing {req.model.upper()}",
+            unit="img",
+            ncols=100,
+            bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}{postfix}]",
+            file=sys.stdout,
+            colour='green'
+        )
+
         # Process batches
-        for batch_start in range(0, len(frame_paths), BATCH_SIZE):
+        for batch_idx, batch_start in enumerate(range(0, len(frame_paths), BATCH_SIZE), 1):
             batch_end = min(batch_start + BATCH_SIZE, len(frame_paths))
             batch_paths = frame_paths[batch_start:batch_end]
-
-            print(f"Processing batch {batch_start // BATCH_SIZE + 1}/{(len(frame_paths) - 1) // BATCH_SIZE + 1}")
+            
+            pbar.set_postfix({
+                "batch": f"{batch_idx}/{total_batches}",
+                "crops": crop_index,
+                "device": DEVICE
+            })
 
             loop = asyncio.get_event_loop()
             images_data = await loop.run_in_executor(executor, read_image_batch, batch_paths)
 
             if not images_data:
+                pbar.update(len(batch_paths))
                 continue
 
             paths_batch = [path for path, _ in images_data]
             images_batch = [img for _, img in images_data]
+
+            tqdm.write(f"Batch {batch_idx}/{total_batches}: Processing {len(images_batch)} images...")
 
             results = detection_model.predict(
                 source=images_batch,
                 batch=len(images_batch),
                 save=False,
                 device=DEVICE,
-                verbose=True,
+                workers=MAX_WORKERS,
+                verbose=False,
                 half=True,
             )
 
             crops_to_save = []
+            plates_in_batch = 0
 
             for idx, (fp, img, r) in enumerate(zip(paths_batch, images_batch, results)):
                 time = Path(fp).stem.split("_")[1]
@@ -183,25 +210,46 @@ def create_api() -> FastAPI:
                     })
 
                     crop_index += 1
+                    plates_in_batch += 1
 
             if crops_to_save:
                 saved_detections = await loop.run_in_executor(
                     executor, save_crops_batch, crops_to_save
                 )
                 all_detections.extend(saved_detections)
+                
+                if plates_in_batch > 0:
+                    tqdm.write(f"Batch {batch_idx}: Found {plates_in_batch} license plates")
 
+            pbar.update(len(batch_paths))
+            
+            pbar.refresh()
+
+        pbar.close()
         executor.shutdown(wait=True)
 
-        print(f"Detection+crop finished. {crop_index} crops saved to {crops_data_dir}")
+        elapsed_time = time_module.time() - start_time
+        print(f"\n{'='*60}")
+        print(f"Detection completed successfully!")
+        print(f"Statistics:")
+        print(f"   • Total frames processed: {len(frame_paths)}")
+        print(f"   • License plates found: {crop_index}")
+        print(f"   • Time elapsed: {elapsed_time:.2f} seconds")
+        print(f"   • Average speed: {len(frame_paths)/elapsed_time:.2f} fps")
+        print(f"   • Crops saved to: {crops_data_dir}")
+        print(f"{'='*60}")
 
-        # Сохраняем результаты
         result_file = os.path.join(crops_data_dir, "yolo_detection_results.json")
         with open(result_file, 'w', encoding='utf-8') as f:
             json.dump(all_detections, f, indent=2, ensure_ascii=False)
 
-        return {"status": "ok", "crops_saved": crop_index}
-
-
+        return {
+            "status": "ok", 
+            "crops_saved": crop_index,
+            "frames_processed": len(frame_paths),
+            "processing_time": elapsed_time,
+            "crops_dir": crops_data_dir
+        }
 
     # TODO: добавить увеличение на 30px если не было поворота
     @app.post("/api/recognizeLicensePlatesPaddle")

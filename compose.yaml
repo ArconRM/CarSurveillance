@@ -22,10 +22,20 @@
     build:
       context: ./models-inference
       dockerfile: Dockerfile
+    shm_size: '16gb'
     ports:
       - "8000:8000"
+      - "8888:8888"
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - JUPYTER_TOKEN=
     volumes:
-      - ./data:/data
+      - /mnt/d/data_2:/data
+      - yolo_cache:/tmp/Ultralytics
+      - paddleocr_cache:/root/.paddleocr
+      - ../license-plate-detection:/app/license-plate-detection
+      - models_cache:/root/.cache
     healthcheck:
       test: [ "CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" ]
       interval: 5s
@@ -46,4 +56,7 @@
       - "5435:5432"
 
 volumes:
-  postgres_data:
+    postgres_data:
+    yolo_cache:
+    paddleocr_cache:
+    models_cache:
