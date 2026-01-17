@@ -18,12 +18,20 @@ from fast_plate_ocr import LicensePlateRecognizer
 from processors import preprocess_crop
 from upscalers import UpscalerManager
 
+import time
+
+def measure_time(fn):
+    start = time.perf_counter()
+    result = fn()
+    elapsed = time.perf_counter() - start
+    return result, elapsed
+
 # Initialize models globally
 fastplate_model = LicensePlateRecognizer('cct-s-v1-global-model')
 torch.set_num_threads(3)
 torch.set_num_interop_threads(3)
 image_extensions = ("*.jpg", "*.jpeg", "*.png", "*.bmp", "*.tiff", "*.webp")
-
+USE_GPU = torch.cuda.is_available()
 
 class CropToLicensePlatesRequest(BaseModel):
     model: str = Field(alias="Model")
@@ -46,7 +54,7 @@ def create_api() -> FastAPI:
     detection_model_yolov8l = YOLO("models/best_v8l.pt")
     detection_model_yolov11 = YOLO("models/best_v11.pt")
 
-    ocr_model = PaddleOCR(lang='en', det=False, rec=True, use_angle_cls=False)
+    ocr_model = PaddleOCR(lang='en', det=False, rec=True, use_angle_cls=False, use_gpu=USE_GPU)
     upscaler_manager = UpscalerManager()
 
     @app.get("/health")
@@ -116,7 +124,7 @@ def create_api() -> FastAPI:
 
         total_batches = (len(frame_paths) + BATCH_SIZE - 1) // BATCH_SIZE
         start_time = time_module.time()
-        
+
         pbar = tqdm(
             total=len(frame_paths),
             desc=f"Processing {req.model.upper()}",
@@ -131,7 +139,7 @@ def create_api() -> FastAPI:
         for batch_idx, batch_start in enumerate(range(0, len(frame_paths), BATCH_SIZE), 1):
             batch_end = min(batch_start + BATCH_SIZE, len(frame_paths))
             batch_paths = frame_paths[batch_start:batch_end]
-            
+
             pbar.set_postfix({
                 "batch": f"{batch_idx}/{total_batches}",
                 "crops": crop_index,
@@ -217,41 +225,40 @@ def create_api() -> FastAPI:
                     executor, save_crops_batch, crops_to_save
                 )
                 all_detections.extend(saved_detections)
-                
+
                 if plates_in_batch > 0:
                     tqdm.write(f"Batch {batch_idx}: Found {plates_in_batch} license plates")
 
             pbar.update(len(batch_paths))
-            
+
             pbar.refresh()
 
         pbar.close()
         executor.shutdown(wait=True)
 
         elapsed_time = time_module.time() - start_time
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"Detection completed successfully!")
         print(f"Statistics:")
         print(f"   • Total frames processed: {len(frame_paths)}")
         print(f"   • License plates found: {crop_index}")
         print(f"   • Time elapsed: {elapsed_time:.2f} seconds")
-        print(f"   • Average speed: {len(frame_paths)/elapsed_time:.2f} fps")
+        print(f"   • Average speed: {len(frame_paths) / elapsed_time:.2f} fps")
         print(f"   • Crops saved to: {crops_data_dir}")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
         result_file = os.path.join(crops_data_dir, "yolo_detection_results.json")
         with open(result_file, 'w', encoding='utf-8') as f:
             json.dump(all_detections, f, indent=2, ensure_ascii=False)
 
         return {
-            "status": "ok", 
+            "status": "ok",
             "crops_saved": crop_index,
             "frames_processed": len(frame_paths),
             "processing_time": elapsed_time,
             "crops_dir": crops_data_dir
         }
 
-    # TODO: добавить увеличение на 30px если не было поворота
     @app.post("/api/recognizeLicensePlatesPaddle")
     async def recognize_license_plates(req: RecognizeLicensePlatesRequest):
         """
@@ -280,7 +287,13 @@ def create_api() -> FastAPI:
             filename = Path(cp).name
             time = Path(cp).stem.split("_")[1].split("-")[0]
 
-            result_raw = ocr_model.ocr(img_raw)
+            (result_raw, ocr_time) = measure_time(
+                lambda: ocr_model.ocr(img_raw)
+            )
+
+            ocr_time_ms = ocr_time * 1000
+            ocr_fps = 1.0 / ocr_time if ocr_time > 0 else 0.0
+
             try:
                 text_raw, confidence_raw = result_raw[0][0][1]
             except:
@@ -291,6 +304,9 @@ def create_api() -> FastAPI:
                 "filename": filename,
                 "plate_text_raw": text_raw,
                 "confidence_raw": float(confidence_raw),
+
+                "ocr_time_ms": round(ocr_time_ms, 3),
+                "ocr_fps": round(ocr_fps, 2),
             }
 
             for upscaler_name in available_upscalers:
@@ -336,14 +352,16 @@ def create_api() -> FastAPI:
         return {
             "status": "ok",
             "total_processed": len(results),
-            "results": results
+            "results": results,
         }
 
     @app.post("/api/recognizeLicensePlatesFastPlate")
     async def recognize_license_plates_fast(req: RecognizeLicensePlatesRequest):
         """
-        Run fast-plate-ocr on pre-cropped license plate images (numpy arrays ONLY).
+        Run fast-plate-ocr on pre-cropped license plate images
+        with RAW + all upscalers (same logic as PaddleOCR).
         """
+
         crops_data_dir = req.crops_data_dir
         result_data_dir = req.result_data_dir
 
@@ -357,6 +375,7 @@ def create_api() -> FastAPI:
         os.makedirs(result_data_dir, exist_ok=True)
 
         results = []
+        available_upscalers = upscaler_manager.get_available_methods()
 
         for idx, cp in enumerate(crop_paths):
             img_bgr = cv2.imread(cp)
@@ -364,38 +383,213 @@ def create_api() -> FastAPI:
                 print(f"[FastPlateOCR] Cannot read {cp}")
                 continue
 
-            img = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
-
-            try:
-                out = fastplate_model.run(img)
-            except Exception as e:
-                print(f"[FastPlateOCR] Error in fastplate_model.run for {cp}: {e}")
-                continue
-
-            if not isinstance(out, dict) or "text" not in out:
-                print(f"[FastPlateOCR] No valid result for {cp}")
-                continue
-
-            text = out["text"]
-            confidence = float(out.get("confidence", 0.0))
+            img_raw = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
 
             filename = Path(cp).name
             time = Path(cp).stem.split("_")[1].split("-")[0]
 
-            results.append({
+            # ---------- RAW ----------
+            try:
+                (out_raw, ocr_time) = measure_time(
+                    lambda: fastplate_model.run(img_raw)
+                )
+
+                ocr_time_ms = ocr_time * 1000
+                ocr_fps = 1.0 / ocr_time if ocr_time > 0 else 0.0
+
+                text_raw, confidence_raw = parse_fastplate_output(out_raw)
+
+            except Exception as e:
+                print(f"[FastPlateOCR][RAW] Error: {e}")
+                text_raw, confidence_raw = "ERROR", 0.0
+                ocr_time_ms, ocr_fps = 0.0, 0.0
+
+            result_entry = {
                 "time": time,
                 "filename": filename,
-                "plate_text_fast": text,
-                "confidence_fast": confidence
-            })
 
-            print(f"[{idx + 1}/{len(crop_paths)}] {filename}: {text} (conf: {confidence:.3f})")
+                "plate_text_raw": text_raw,
+                "confidence_raw": confidence_raw,
 
+                "ocr_time_ms": round(ocr_time_ms, 3),
+                "ocr_fps": round(ocr_fps, 2),
+            }
+
+            # ---------- UPSCALERS ----------
+            for upscaler_name in available_upscalers:
+                field_suffix = upscaler_name.lower().replace("-", "_").replace(" ", "_")
+
+                try:
+                    processed_bgr = preprocess_crop(
+                        cp,
+                        upscaler_manager,
+                        upscaler_name=upscaler_name
+                    )
+
+                    if processed_bgr is None:
+                        continue
+
+                    processed_rgb = cv2.cvtColor(processed_bgr, cv2.COLOR_BGR2RGB)
+
+                    out_proc = fastplate_model.run(processed_rgb)
+
+                    text_proc, conf_proc = parse_fastplate_output(out_proc)
+
+                    result_entry[f"plate_text_processed_{field_suffix}"] = text_proc
+                    result_entry[f"confidence_processed_{field_suffix}"] = conf_proc
+
+                    print(f"  [{upscaler_name}] {text_proc} (conf: {conf_proc:.3f})")
+
+                except Exception as e:
+                    print(f"  [{upscaler_name}] Error: {e}")
+                    result_entry[f"plate_text_processed_{field_suffix}"] = "ERROR"
+                    result_entry[f"confidence_processed_{field_suffix}"] = 0.0
+
+            results.append(result_entry)
+
+            print(
+                f"[{idx + 1}/{len(crop_paths)}] {filename}: "
+                f"RAW={text_raw} (conf: {confidence_raw:.3f})"
+            )
+
+        # ---------- SAVE ----------
         result_file = os.path.join(result_data_dir, "recognition_results_fast.json")
-        with open(result_file, 'w', encoding='utf-8') as f:
+        with open(result_file, "w", encoding="utf-8") as f:
             json.dump(results, f, indent=2, ensure_ascii=False)
 
         print(f"[FastPlateOCR] Finished. Results saved to {result_file}")
+
+        return {
+            "status": "ok",
+            "total_processed": len(results),
+            "results": results,
+        }
+
+    def parse_fastplate_output(out):
+        """
+        Normalize fast-plate-ocr output to (text, confidence)
+        """
+        if out is None:
+            return "N/A", 0.0
+
+        # case 1: dict
+        if isinstance(out, dict):
+            return (
+                out.get("text", "N/A"),
+                float(out.get("confidence", 0.0))
+            )
+
+        # case 2: list
+        if isinstance(out, list):
+            if len(out) == 0:
+                return "N/A", 0.0
+
+            first = out[0]
+            if isinstance(first, dict):
+                return (
+                    first.get("text", "N/A"),
+                    float(first.get("confidence", 0.0))
+                )
+
+        # fallback
+        return "N/A", 0.0
+
+    @app.post("/api/recognizeLicensePlatesLMStudio")
+    async def recognize_license_plates_lmstudio(req: RecognizeLicensePlatesRequest):
+        """
+        Run OCR on pre-cropped license plate images using LM Studio (LLM OCR)
+        """
+
+        crops_data_dir = req.crops_data_dir
+        result_data_dir = req.result_data_dir
+
+        crop_paths = []
+        for ext in image_extensions:
+            crop_paths.extend(glob.glob(os.path.join(crops_data_dir, ext)))
+        crop_paths = sorted(crop_paths)
+
+        print(f"Found {len(crop_paths)} crops in {crops_data_dir}")
+
+        os.makedirs(result_data_dir, exist_ok=True)
+
+        results = []
+        available_upscalers = upscaler_manager.get_available_methods()
+
+        for idx, cp in enumerate(crop_paths):
+            filename = Path(cp).name
+            time = Path(cp).stem.split("_")[1].split("-")[0]
+
+            # ---------- RAW OCR ----------
+            try:
+                (text_raw, ocr_time) = measure_time(
+                    lambda: ocr_lmstudio(cp)
+                )
+
+                ocr_time_ms = ocr_time * 1000
+                ocr_fps = 1.0 / ocr_time if ocr_time > 0 else 0.0
+
+            except Exception as e:
+                print(f"[RAW] OCR error: {e}")
+                text_raw = "N/A"
+
+            result_entry = {
+                "time": time,
+                "filename": filename,
+                "plate_text_raw": text_raw,
+                "confidence_raw": 0.0,
+
+                "ocr_time_ms": round(ocr_time_ms, 3),
+                "ocr_fps": round(ocr_fps, 2),
+            }
+            # ---------- UPSCALED OCR ----------
+            for upscaler_name in available_upscalers:
+                field_suffix = upscaler_name.lower().replace("-", "_").replace(" ", "_")
+
+                try:
+                    processed_img = preprocess_crop(
+                        cp,
+                        upscaler_manager,
+                        upscaler_name=upscaler_name
+                    )
+
+                    if processed_img is None:
+                        raise RuntimeError("Upscaler returned None")
+
+                    # временно сохраняем, т.к. LM Studio принимает путь
+                    tmp_path = os.path.join(
+                        result_data_dir,
+                        f"tmp_{field_suffix}_{filename}"
+                    )
+                    cv2.imwrite(tmp_path, processed_img)
+
+                    text_processed = ocr_lmstudio(tmp_path)
+                    confidence_processed = 0.0
+
+                    os.remove(tmp_path)
+
+                    result_entry[f"plate_text_processed_{field_suffix}"] = text_processed
+                    result_entry[f"confidence_processed_{field_suffix}"] = confidence_processed
+
+                    print(f"  [{upscaler_name}] {text_processed}")
+
+                except Exception as e:
+                    print(f"  [{upscaler_name}] Error: {e}")
+                    result_entry[f"plate_text_processed_{field_suffix}"] = "ERROR"
+                    result_entry[f"confidence_processed_{field_suffix}"] = 0.0
+
+            results.append(result_entry)
+
+            print(
+                f"[{idx + 1}/{len(crop_paths)}] "
+                f"{filename}: RAW={text_raw}"
+            )
+
+        # ---------- SAVE RESULTS ----------
+        result_file = os.path.join(result_data_dir, "recognition_results.json")
+        with open(result_file, "w", encoding="utf-8") as f:
+            json.dump(results, f, indent=2, ensure_ascii=False)
+
+        print(f"\nRecognition finished. Results saved to {result_file}")
 
         return {
             "status": "ok",
@@ -404,3 +598,45 @@ def create_api() -> FastAPI:
         }
 
     return app
+
+
+import base64
+import requests
+
+LMSTUDIO_URL = "http://localhost:1234/v1/chat/completions"
+LMSTUDIO_MODEL = "nanonets-ocr2-3b"
+
+
+def ocr_lmstudio(image_path: str) -> str:
+    def encode_image(path):
+        with open(path, "rb") as f:
+            return base64.b64encode(f.read()).decode("utf-8")
+
+    image_b64 = encode_image(image_path)
+
+    payload = {
+        "model": LMSTUDIO_MODEL,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/png;base64,{image_b64}"
+                        }
+                    }
+                ]
+            }
+        ],
+        "max_tokens": 256,
+        "temperature": 0.2
+    }
+
+    r = requests.post(LMSTUDIO_URL, json=payload, timeout=60)
+
+    if r.status_code != 200:
+        raise RuntimeError(f"LM Studio error {r.status_code}: {r.text}")
+
+    result = r.json()
+    return result["choices"][0]["message"]["content"].strip()
