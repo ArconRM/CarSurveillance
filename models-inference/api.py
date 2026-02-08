@@ -20,11 +20,13 @@ from upscalers import UpscalerManager
 
 import time
 
+
 def measure_time(fn):
     start = time.perf_counter()
     result = fn()
     elapsed = time.perf_counter() - start
     return result, elapsed
+
 
 # Initialize models globally
 fastplate_model = LicensePlateRecognizer('cct-s-v1-global-model')
@@ -32,6 +34,7 @@ torch.set_num_threads(3)
 torch.set_num_interop_threads(3)
 image_extensions = ("*.jpg", "*.jpeg", "*.png", "*.bmp", "*.tiff", "*.webp")
 USE_GPU = torch.cuda.is_available()
+
 
 class CropToLicensePlatesRequest(BaseModel):
     model: str = Field(alias="Model")
@@ -513,7 +516,6 @@ def create_api() -> FastAPI:
         os.makedirs(result_data_dir, exist_ok=True)
 
         results = []
-        available_upscalers = upscaler_manager.get_available_methods()
 
         for idx, cp in enumerate(crop_paths):
             filename = Path(cp).name
@@ -522,7 +524,7 @@ def create_api() -> FastAPI:
             # ---------- RAW OCR ----------
             try:
                 (text_raw, ocr_time) = measure_time(
-                    lambda: ocr_lmstudio(cp)
+                    lambda: ocr_lmstudio(cp, text_prompt="give me only text that is placed here", lmstudio_model="gemma-3-4b")
                 )
 
                 ocr_time_ms = ocr_time * 1000
@@ -541,42 +543,6 @@ def create_api() -> FastAPI:
                 "ocr_time_ms": round(ocr_time_ms, 3),
                 "ocr_fps": round(ocr_fps, 2),
             }
-            # ---------- UPSCALED OCR ----------
-            for upscaler_name in available_upscalers:
-                field_suffix = upscaler_name.lower().replace("-", "_").replace(" ", "_")
-
-                try:
-                    processed_img = preprocess_crop(
-                        cp,
-                        upscaler_manager,
-                        upscaler_name=upscaler_name
-                    )
-
-                    if processed_img is None:
-                        raise RuntimeError("Upscaler returned None")
-
-                    # временно сохраняем, т.к. LM Studio принимает путь
-                    tmp_path = os.path.join(
-                        result_data_dir,
-                        f"tmp_{field_suffix}_{filename}"
-                    )
-                    cv2.imwrite(tmp_path, processed_img)
-
-                    text_processed = ocr_lmstudio(tmp_path)
-                    confidence_processed = 0.0
-
-                    os.remove(tmp_path)
-
-                    result_entry[f"plate_text_processed_{field_suffix}"] = text_processed
-                    result_entry[f"confidence_processed_{field_suffix}"] = confidence_processed
-
-                    print(f"  [{upscaler_name}] {text_processed}")
-
-                except Exception as e:
-                    print(f"  [{upscaler_name}] Error: {e}")
-                    result_entry[f"plate_text_processed_{field_suffix}"] = "ERROR"
-                    result_entry[f"confidence_processed_{field_suffix}"] = 0.0
-
             results.append(result_entry)
 
             print(
@@ -604,10 +570,9 @@ import base64
 import requests
 
 LMSTUDIO_URL = "http://localhost:1234/v1/chat/completions"
-LMSTUDIO_MODEL = "nanonets-ocr2-3b"
 
 
-def ocr_lmstudio(image_path: str) -> str:
+def ocr_lmstudio(image_path: str, text_prompt: str, lmstudio_model: str = "nanonets-ocr2-3b") -> str:
     def encode_image(path):
         with open(path, "rb") as f:
             return base64.b64encode(f.read()).decode("utf-8")
@@ -615,7 +580,7 @@ def ocr_lmstudio(image_path: str) -> str:
     image_b64 = encode_image(image_path)
 
     payload = {
-        "model": LMSTUDIO_MODEL,
+        "model": lmstudio_model,
         "messages": [
             {
                 "role": "user",
@@ -624,7 +589,30 @@ def ocr_lmstudio(image_path: str) -> str:
                         "type": "image_url",
                         "image_url": {
                             "url": f"data:image/png;base64,{image_b64}"
-                        }
+                        },
+
+                    },
+                    {
+                        "type": "text",
+                        "text": text_prompt
+                    }
+                ]
+            }
+        ],
+        "max_tokens": 256,
+        "temperature": 0.2
+    } if len(text_prompt) > 0 else {
+        "model": lmstudio_model,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/png;base64,{image_b64}"
+                        },
+
                     }
                 ]
             }
@@ -632,6 +620,7 @@ def ocr_lmstudio(image_path: str) -> str:
         "max_tokens": 256,
         "temperature": 0.2
     }
+
 
     r = requests.post(LMSTUDIO_URL, json=payload, timeout=60)
 
