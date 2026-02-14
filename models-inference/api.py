@@ -45,6 +45,7 @@ class CropToLicensePlatesRequest(BaseModel):
 class RecognizeLicensePlatesRequest(BaseModel):
     crops_data_dir: str = Field(alias="CropsDataPath")
     result_data_dir: str = Field(alias="ResultDataPath")
+    model: str = Field(alias="Model")
 
 
 def create_api() -> FastAPI:
@@ -524,7 +525,9 @@ def create_api() -> FastAPI:
             # ---------- RAW OCR ----------
             try:
                 (text_raw, ocr_time) = measure_time(
-                    lambda: ocr_lmstudio(cp, text_prompt="give me only text that is placed here", lmstudio_model="gemma-3-4b")
+                    lambda: ocr_lmstudio(cp,
+                                         text_prompt="give me only text that is placed here",
+                                         lmstudio_model=req.model)
                 )
 
                 ocr_time_ms = ocr_time * 1000
@@ -569,7 +572,7 @@ def create_api() -> FastAPI:
 import base64
 import requests
 
-LMSTUDIO_URL = "http://localhost:1234/v1/chat/completions"
+LMSTUDIO_URL = "http://127.0.0.1:1234/v1/chat/completions"
 
 
 def ocr_lmstudio(image_path: str, text_prompt: str, lmstudio_model: str = "nanonets-ocr2-3b") -> str:
