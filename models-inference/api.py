@@ -267,29 +267,46 @@ def create_api() -> FastAPI:
     async def recognize_license_plates(req: RecognizeLicensePlatesRequest):
         """
         Run OCR on pre-cropped license plate images with all upscalers
+        Preserves folder structure and uses parallel processing
         """
+        from tqdm import tqdm
+        import sys
+        import time as time_module
+
         crops_data_dir = req.crops_data_dir
         result_data_dir = req.result_data_dir
 
+        # Gather crop paths recursively
         crop_paths = []
         for ext in image_extensions:
-            crop_paths.extend(glob.glob(os.path.join(crops_data_dir, ext)))
+            crop_paths.extend(glob.glob(os.path.join(crops_data_dir, "**", ext), recursive=True))
         crop_paths = sorted(crop_paths)
 
         print(f"Found {len(crop_paths)} crops in {crops_data_dir}")
-
         os.makedirs(result_data_dir, exist_ok=True)
 
-        results = []
         available_upscalers = upscaler_manager.get_available_methods()
+        print(f"Available upscalers: {available_upscalers}")
 
-        for idx, cp in enumerate(crop_paths):
+        def process_single_crop(args):
+            """Process a single crop with all upscalers"""
+            cp, idx, total = args
             img_raw = cv2.imread(cp)
             if img_raw is None:
-                continue
+                return None
 
             filename = Path(cp).name
-            time = Path(cp).stem.split("_")[1].split("-")[0]
+
+            # Extract time from filename (handles both formats)
+            try:
+                time = Path(cp).stem.split("_")[1].split("-")[0]
+            except:
+                time = "unknown"
+
+            # Calculate relative path
+            rel_path = os.path.relpath(os.path.dirname(cp), crops_data_dir)
+            if rel_path == ".":
+                rel_path = ""
 
             (result_raw, ocr_time) = measure_time(
                 lambda: ocr_model.ocr(img_raw)
@@ -306,13 +323,15 @@ def create_api() -> FastAPI:
             result_entry = {
                 "time": time,
                 "filename": filename,
+                "relative_path": rel_path,
+                "full_path": cp,
                 "plate_text_raw": text_raw,
                 "confidence_raw": float(confidence_raw),
-
                 "ocr_time_ms": round(ocr_time_ms, 3),
                 "ocr_fps": round(ocr_fps, 2),
             }
 
+            # Process with each upscaler
             for upscaler_name in available_upscalers:
                 try:
                     # Preprocess with specific upscaler
@@ -334,29 +353,107 @@ def create_api() -> FastAPI:
                     result_entry[f"plate_text_processed_{field_suffix}"] = text_processed
                     result_entry[f"confidence_processed_{field_suffix}"] = float(confidence_processed)
 
-                    print(f"  [{upscaler_name}] {text_processed} (conf: {confidence_processed:.3f})")
-
                 except Exception as e:
-                    print(f"  [{upscaler_name}] Error: {e}")
                     field_suffix = upscaler_name.lower().replace("-", "_").replace(" ", "_")
                     result_entry[f"plate_text_processed_{field_suffix}"] = "ERROR"
                     result_entry[f"confidence_processed_{field_suffix}"] = 0.0
 
-            results.append(result_entry)
+            return result_entry
 
-            print(f"[{idx + 1}/{len(crop_paths)}] {filename}: RAW={text_raw} (conf: {confidence_raw:.3f})")
+        # Process crops in parallel with progress bar
+        results = []
+        start_time = time_module.time()
 
-        # Save results
+        pbar = tqdm(
+            total=len(crop_paths),
+            desc="OCR Recognition",
+            unit="crop",
+            ncols=100,
+            bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]",
+            file=sys.stdout,
+            colour='blue'
+        )
+
+        # Use ThreadPoolExecutor for parallel processing
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            # Prepare arguments for parallel processing
+            process_args = [(cp, idx, len(crop_paths)) for idx, cp in enumerate(crop_paths)]
+
+            # Submit all tasks
+            future_to_crop = {executor.submit(process_single_crop, args): args[0]
+                              for args in process_args}
+
+            # Process completed tasks
+            for future in concurrent.futures.as_completed(future_to_crop):
+                cp = future_to_crop[future]
+                try:
+                    result = future.result()
+                    if result is not None:
+                        results.append(result)
+                        # Show progress
+                        text_raw = result.get("plate_text_raw", "N/A")
+                        conf_raw = result.get("confidence_raw", 0.0)
+                        pbar.set_postfix({
+                            "last": text_raw[:10],
+                            "conf": f"{conf_raw:.2f}"
+                        })
+                except Exception as e:
+                    print(f"Error processing {cp}: {e}", flush=True)
+                finally:
+                    pbar.update(1)
+
+        pbar.close()
+
+        elapsed_time = time_module.time() - start_time
+
+        # Sort results by filename to maintain original order
+        results.sort(key=lambda x: x.get("filename", ""))
+
+        # Save consolidated results
         result_file = os.path.join(result_data_dir, "recognition_results.json")
         with open(result_file, 'w', encoding='utf-8') as f:
             json.dump(results, f, indent=2, ensure_ascii=False)
 
-        print(f"\nRecognition finished. Results saved to {result_file}")
+        # Save results by subfolder structure if needed
+        results_by_folder = {}
+        for result in results:
+            rel_path = result.get("relative_path", "")
+            if rel_path not in results_by_folder:
+                results_by_folder[rel_path] = []
+            results_by_folder[rel_path].append(result)
+
+        # Save individual folder results
+        for rel_path, folder_results in results_by_folder.items():
+            if rel_path:
+                folder_result_dir = os.path.join(result_data_dir, rel_path)
+                os.makedirs(folder_result_dir, exist_ok=True)
+                folder_result_file = os.path.join(folder_result_dir, "recognition_results.json")
+                with open(folder_result_file, 'w', encoding='utf-8') as f:
+                    json.dump(folder_results, f, indent=2, ensure_ascii=False)
+
+        # Print statistics
+        print(f"\n{'=' * 60}")
+        print(f"OCR Recognition completed successfully!")
+        print(f"Statistics:")
+        print(f"   • Total crops processed: {len(results)}")
+        print(f"   • Time elapsed: {elapsed_time:.2f} seconds")
+        print(f"   • Average speed: {len(results) / elapsed_time:.2f} crops/sec")
+        print(f"   • Results saved to: {result_data_dir}")
+
+        # Print summary of recognized plates
+        if results:
+            print(f"\nRecognition Summary (first 10):")
+            for r in results[:10]:
+                rel_path = f"[{r.get('relative_path', '')}]" if r.get('relative_path') else ""
+                print(f"  {rel_path} {r['filename']}: {r['plate_text_raw']} (conf: {r['confidence_raw']:.3f})")
+        print(f"{'=' * 60}")
 
         return {
             "status": "ok",
             "total_processed": len(results),
-            "results": results,
+            "processing_time": elapsed_time,
+            "results_file": result_file,
+            "available_upscalers": available_upscalers
         }
 
     @app.post("/api/recognizeLicensePlatesFastPlate")
@@ -502,68 +599,185 @@ def create_api() -> FastAPI:
     async def recognize_license_plates_lmstudio(req: RecognizeLicensePlatesRequest):
         """
         Run OCR on pre-cropped license plate images using LM Studio (LLM OCR)
+        Preserves folder structure and uses parallel processing
         """
+        from tqdm import tqdm
+        import sys
+        import time as time_module
+
+        MAX_WORKERS = 2  # Ограничиваем чтобы не перегрузить LM Studio
 
         crops_data_dir = req.crops_data_dir
         result_data_dir = req.result_data_dir
 
+        # Gather crop paths recursively
         crop_paths = []
         for ext in image_extensions:
-            crop_paths.extend(glob.glob(os.path.join(crops_data_dir, ext)))
+            crop_paths.extend(glob.glob(os.path.join(crops_data_dir, "**", ext), recursive=True))
         crop_paths = sorted(crop_paths)
 
         print(f"Found {len(crop_paths)} crops in {crops_data_dir}")
-
         os.makedirs(result_data_dir, exist_ok=True)
 
-        results = []
+        def process_single_crop_lmstudio(args):
+            """Process a single crop with LM Studio OCR"""
+            cp, idx, total = args
 
-        for idx, cp in enumerate(crop_paths):
-            filename = Path(cp).name
-            time = Path(cp).stem.split("_")[1].split("-")[0]
-
-            # ---------- RAW OCR ----------
             try:
-                (text_raw, ocr_time) = measure_time(
-                    lambda: ocr_lmstudio(cp,
-                                         text_prompt="give me only text that is placed here",
-                                         lmstudio_model=req.model)
-                )
+                filename = Path(cp).name
 
-                ocr_time_ms = ocr_time * 1000
-                ocr_fps = 1.0 / ocr_time if ocr_time > 0 else 0.0
+                # Extract time from filename
+                try:
+                    time = Path(cp).stem.split("_")[1].split("-")[0]
+                except:
+                    time = "unknown"
+
+                # Calculate relative path
+                rel_path = os.path.relpath(os.path.dirname(cp), crops_data_dir)
+                if rel_path == ".":
+                    rel_path = ""
+
+                # RAW OCR with LM Studio
+                try:
+                    (text_raw, ocr_time) = measure_time(
+                        lambda: ocr_lmstudio(cp,
+                                             text_prompt="You are an OCR system. Output only the exact text visible in the image, nothing else. This is a cropped car plate. Format: 3. letters (A,B,E,K,M,H,O,P,C,T,Y,X), 3 digits, 2-3 digit region.",
+                                             lmstudio_model=req.model)
+                    )
+
+                    ocr_time_ms = ocr_time * 1000
+                    ocr_fps = 1.0 / ocr_time if ocr_time > 0 else 0.0
+
+                except Exception as e:
+                    print(f"[RAW] OCR error for {filename}: {e}", flush=True)
+                    text_raw = "ERROR"
+                    ocr_time_ms = 0
+                    ocr_fps = 0
+
+                result_entry = {
+                    "time": time,
+                    "filename": filename,
+                    "relative_path": rel_path,
+                    "full_path": cp,
+                    "plate_text_raw": text_raw,
+                    "confidence_raw": 0.0,  # LLM doesn't provide confidence
+                    "ocr_time_ms": round(ocr_time_ms, 3),
+                    "ocr_fps": round(ocr_fps, 2),
+                }
+
+                return result_entry
 
             except Exception as e:
-                print(f"[RAW] OCR error: {e}")
-                text_raw = "N/A"
+                print(f"Error processing {cp}: {e}", flush=True)
+                return None
 
-            result_entry = {
-                "time": time,
-                "filename": filename,
-                "plate_text_raw": text_raw,
-                "confidence_raw": 0.0,
+        # Process crops in parallel with progress bar
+        results = []
+        start_time = time_module.time()
 
-                "ocr_time_ms": round(ocr_time_ms, 3),
-                "ocr_fps": round(ocr_fps, 2),
-            }
-            results.append(result_entry)
+        pbar = tqdm(
+            total=len(crop_paths),
+            desc="LM Studio OCR",
+            unit="crop",
+            ncols=100,
+            bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]",
+            file=sys.stdout,
+            colour='magenta'
+        )
 
-            print(
-                f"[{idx + 1}/{len(crop_paths)}] "
-                f"{filename}: RAW={text_raw}"
-            )
+        # Use ThreadPoolExecutor for parallel processing
+        with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            # Prepare arguments for parallel processing
+            process_args = [(cp, idx, len(crop_paths)) for idx, cp in enumerate(crop_paths)]
 
-        # ---------- SAVE RESULTS ----------
-        result_file = os.path.join(result_data_dir, "recognition_results.json")
-        with open(result_file, "w", encoding="utf-8") as f:
+            # Submit all tasks
+            future_to_crop = {executor.submit(process_single_crop_lmstudio, args): args[0]
+                              for args in process_args}
+
+            # Process completed tasks
+            for future in concurrent.futures.as_completed(future_to_crop):
+                cp = future_to_crop[future]
+                try:
+                    result = future.result()
+                    if result is not None:
+                        results.append(result)
+                        # Show progress
+                        text_raw = result.get("plate_text_raw", "N/A")
+                        filename = result.get("filename", "")
+                        pbar.set_postfix({
+                            "last": text_raw[:10],
+                            "file": filename[:20]
+                        })
+                except Exception as e:
+                    print(f"Error processing {cp}: {e}", flush=True)
+                finally:
+                    pbar.update(1)
+
+        pbar.close()
+
+        elapsed_time = time_module.time() - start_time
+
+        # Sort results by filename to maintain original order
+        results.sort(key=lambda x: x.get("filename", ""))
+
+        # Save consolidated results
+        result_file = os.path.join(result_data_dir, "recognition_results_lmstudio.json")
+        with open(result_file, 'w', encoding='utf-8') as f:
             json.dump(results, f, indent=2, ensure_ascii=False)
 
-        print(f"\nRecognition finished. Results saved to {result_file}")
+        # Save results by subfolder structure
+        results_by_folder = {}
+        for result in results:
+            rel_path = result.get("relative_path", "")
+            if rel_path not in results_by_folder:
+                results_by_folder[rel_path] = []
+            results_by_folder[rel_path].append(result)
+
+        # Save individual folder results
+        for rel_path, folder_results in results_by_folder.items():
+            if rel_path:
+                folder_result_dir = os.path.join(result_data_dir, rel_path)
+                os.makedirs(folder_result_dir, exist_ok=True)
+                folder_result_file = os.path.join(folder_result_dir, "recognition_results_lmstudio.json")
+                with open(folder_result_file, 'w', encoding='utf-8') as f:
+                    json.dump(folder_results, f, indent=2, ensure_ascii=False)
+
+        # Calculate statistics
+        successful = sum(1 for r in results if r.get("plate_text_raw") not in ["ERROR", "N/A"])
+        failed = len(results) - successful
+        avg_time = sum(r.get("ocr_time_ms", 0) for r in results) / len(results) if results else 0
+
+        # Print statistics
+        print(f"\n{'=' * 60}")
+        print(f"LM Studio OCR completed successfully!")
+        print(f"Statistics:")
+        print(f"   • Total crops processed: {len(results)}")
+        print(f"   • Successful recognitions: {successful}")
+        print(f"   • Failed recognitions: {failed}")
+        print(f"   • Success rate: {successful / len(results) * 100:.1f}%" if results else "N/A")
+        print(f"   • Average OCR time: {avg_time:.2f} ms/crop")
+        print(f"   • Total time elapsed: {elapsed_time:.2f} seconds")
+        print(f"   • Average speed: {len(results) / elapsed_time:.2f} crops/sec")
+        print(f"   • Results saved to: {result_data_dir}")
+
+        # Print summary of recognized plates
+        if results:
+            print(f"\nRecognition Summary (first 15):")
+            for r in results[:15]:
+                rel_path = f"[{r.get('relative_path', '')}]" if r.get('relative_path') else ""
+                status = "✓" if r['plate_text_raw'] not in ["ERROR", "N/A"] else "✗"
+                print(f"  {status} {rel_path} {r['filename']}: {r['plate_text_raw']} ({r['ocr_time_ms']:.0f}ms)")
+        print(f"{'=' * 60}")
 
         return {
             "status": "ok",
             "total_processed": len(results),
-            "results": results
+            "successful": successful,
+            "failed": failed,
+            "processing_time": elapsed_time,
+            "average_ocr_time_ms": round(avg_time, 2),
+            "results_file": result_file,
+            "model_used": req.model
         }
 
     return app
@@ -602,8 +816,10 @@ def ocr_lmstudio(image_path: str, text_prompt: str, lmstudio_model: str = "nanon
                 ]
             }
         ],
-        "max_tokens": 256,
-        "temperature": 0.2
+        "temperature": 0.0,
+        "top_p": 0.1,
+        "repetition_penalty": 1.2,
+        "options": {"reset_chat": True}
     } if len(text_prompt) > 0 else {
         "model": lmstudio_model,
         "messages": [
@@ -620,8 +836,10 @@ def ocr_lmstudio(image_path: str, text_prompt: str, lmstudio_model: str = "nanon
                 ]
             }
         ],
-        "max_tokens": 256,
-        "temperature": 0.2
+        "temperature": 0.0,
+        "top_p": 0.1,
+        "repetition_penalty": 1.2,
+        "options": {"reset_chat": True}
     }
 
 
