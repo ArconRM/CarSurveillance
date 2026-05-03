@@ -843,7 +843,7 @@ def ocr_lmstudio(image_path: str, text_prompt: str, lmstudio_model: str = "nanon
     }
 
 
-    r = requests.post(LMSTUDIO_URL, json=payload, timeout=60)
+    r = requests.post(LMSTUDIO_URL, json=payload, timeout=400)
 
     if r.status_code != 200:
         raise RuntimeError(f"LM Studio error {r.status_code}: {r.text}")

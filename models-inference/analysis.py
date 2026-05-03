@@ -10,7 +10,7 @@ from tqdm import tqdm
 # CONFIG
 # =======================
 
-ROOT_DIR = Path("/Volumes/Transcend/data_2/crops")
+ROOT_DIR = Path("/media/artemiy/EXTERNAL_USB/FUCK/data_2/crops")
 GT_MODEL = "yolov8l"
 IOU_THRESHOLD = 0.5
 
@@ -64,7 +64,7 @@ def load_model_results(model_dir: Path):
                 records.append({
                     "model": model_dir.name,
                     "date": date,
-                    "frame": item["frame"],
+                    "frame": item["frame"].split("/")[-1],
                     "bbox": (
                         item["coordinates"]["x1"],
                         item["coordinates"]["y1"],
