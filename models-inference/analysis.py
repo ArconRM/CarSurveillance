@@ -10,7 +10,7 @@ from tqdm import tqdm
 # CONFIG
 # =======================
 
-ROOT_DIR = Path("/media/artemiy/EXTERNAL_USB/FUCK/data_2/crops")
+ROOT_DIR = Path("/run/media/artemiy/EXTERNAL_USB/FUCK/data_2/crops")
 GT_MODEL = "yolov8l"
 IOU_THRESHOLD = 0.5
 

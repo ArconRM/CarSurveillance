@@ -32,32 +32,34 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
 
-BASE_DIR = Path("/home/artemiy/Documents/test_rec/calcs//ocr_quality")
+BASE_DIR = Path("/home/artemiy/Documents/test_rec/calcs/ocr_quality")
 REFERENCE_MODEL = "qwen3-vl-8b"
 REFERENCE_JSON = "recognition_results_lmstudio.json"
 OUT_DIR = BASE_DIR / "charts"
 OUT_DIR.mkdir(exist_ok=True)
 
 MODELS = {
+    "easyocr": "recognition_results_easyocr.json",
     "gemma-3-4b": "recognition_results_lmstudio.json",
     "gemma-4-e2b": "recognition_results_lmstudio.json",
     "nanonets-ocr2-3b@q4_k_m": "recognition_results_lmstudio.json",
     "nanonets-ocr2-3b@q8_0": "recognition_results_lmstudio.json",
     "paddle": "recognition_results.json",
     "qwen3-vl-4b": "recognition_results_lmstudio.json",
+    "qwen3.5-9b": "recognition_results_lmstudio.json",
 }
 
 SUBFOLDERS = ["06_12", "07_12", "09_11", "13_12", "15_11", "16_11", "29_11", "30_11"]
 
 FOLDER_LABELS = {
-    "06_12": "06 Dec\n(lens, ok)",
-    "07_12": "07 Dec\n(lens, worse)",
-    "09_11": "09 Nov\n(bad quality)",
-    "13_12": "13 Dec\n(snow)",
-    "15_11": "15 Nov\n(light, mixed)",
-    "16_11": "16 Nov\n(light, mixed)",
-    "29_11": "29 Nov\n(lens, meh)",
-    "30_11": "30 Nov\n(full day, lens)",
+    "06_12": "06 дек\n(объектив, норм)",
+    "07_12": "07 дек\n(объектив, хуже)",
+    "09_11": "09 ноя\n(плохое кач-во)",
+    "13_12": "13 дек\n(снег)",
+    "15_11": "15 ноя\n(свет, смешанно)",
+    "16_11": "16 ноя\n(свет, смешанно)",
+    "29_11": "29 ноя\n(объектив, так себе)",
+    "30_11": "30 ноя\n(весь день, объектив)",
 }
 
 PALETTE = [
@@ -69,6 +71,8 @@ PALETTE = [
     "#3A7CA5",
     "#BC4B51",
     "#D4A76A",
+    "#7B2D8B",
+    "#2D8B5A",
 ]
 
 BG = "#F5F5F5"
@@ -237,6 +241,7 @@ def compare_model(model_name, json_filename, ref_global, allowed_filenames=None)
     return {"overall": overall_stats, "per_folder": per_folder,
             "all_records": all_records}
 
+
 def build_reference_hit_set(ref_global, ref_model_name, ref_json_filename):
     """
     Возвращает множество filename-ов, где референсная модель 'попала':
@@ -269,7 +274,7 @@ def short_name(m):
 def chart_overall_bars(results, sorted_models, speed_data):
     apply_light_style()
     fig, axes = plt.subplots(1, 2, figsize=(16, 6))
-    fig.suptitle("OCR Models Overall Quality (reference: qwen3-vl-8b)",
+    fig.suptitle("Общее качество моделей OCR (эталон: qwen3-vl-8b)",
                  fontsize=14, fontweight="bold", color=TEXT_C, y=1.02)
 
     labels = [short_name(m) for m in sorted_models]
@@ -280,10 +285,10 @@ def chart_overall_bars(results, sorted_models, speed_data):
     vals = [results[m]["overall"]["exact_match_pct"] for m in sorted_models]
     bars = ax.bar(x, vals, color=colors, width=0.7, zorder=3,
                   edgecolor="white", linewidth=1)
-    ax.set_title("Exact Match % higher is better", fontsize=12, pad=10, fontweight="bold")
+    ax.set_title("Точное совпадение % — больше лучше", fontsize=12, pad=10, fontweight="bold")
     ax.set_xticks(x)
     ax.set_xticklabels(labels, fontsize=9)
-    ax.set_ylabel("Exact Match %")
+    ax.set_ylabel("Точное совпадение %")
     ax.set_ylim(0, 110)
     ax.grid(axis="y", zorder=0, alpha=0.5)
     for bar, v in zip(bars, vals):
@@ -298,10 +303,10 @@ def chart_overall_bars(results, sorted_models, speed_data):
            [cer_vals[i] for i in order],
            color=[colors[i] for i in order],
            width=0.7, zorder=3, edgecolor="white", linewidth=1)
-    ax.set_title("Mean CER lower is better", fontsize=12, pad=10, fontweight="bold")
+    ax.set_title("Средний CER — меньше лучше", fontsize=12, pad=10, fontweight="bold")
     ax.set_xticks(np.arange(len(sorted_models)))
     ax.set_xticklabels([short_name(sorted_models[i]) for i in order], fontsize=9)
-    ax.set_ylabel("Character Error Rate")
+    ax.set_ylabel("Частота ошибок на символ (CER)")
     ax.grid(axis="y", zorder=0, alpha=0.5)
     for xi, i in enumerate(order):
         v = cer_vals[i]
@@ -312,13 +317,13 @@ def chart_overall_bars(results, sorted_models, speed_data):
     p = OUT_DIR / "01_overall_bars.png"
     fig.savefig(p, dpi=150, bbox_inches="tight", facecolor=BG)
     plt.close(fig)
-    print(f"  Saved: {p}")
+    print(f"  Сохранено: {p}")
 
 
 def chart_heatmap(results, sorted_models, metric, title, fmt_fn, cmap):
     apply_light_style()
     fig, ax = plt.subplots(figsize=(14, 5))
-    fig.suptitle(f"Per Day Heatmap {title}", fontsize=13,
+    fig.suptitle(f"Тепловая карта по дням — {title}", fontsize=13,
                  fontweight="bold", color=TEXT_C, y=1.02)
 
     data = np.array([
@@ -352,13 +357,13 @@ def chart_heatmap(results, sorted_models, metric, title, fmt_fn, cmap):
     p = OUT_DIR / f"02_heatmap_{metric}.png"
     fig.savefig(p, dpi=150, bbox_inches="tight", facecolor=BG)
     plt.close(fig)
-    print(f"  Saved: {p}")
+    print(f"  Сохранено: {p}")
 
 
 def chart_per_day_lines(results, sorted_models):
     apply_light_style()
     fig, ax = plt.subplots(figsize=(14, 6))
-    fig.suptitle("Exact Match % by Day All Models", fontsize=13,
+    fig.suptitle("Точное совпадение % по дням — все модели", fontsize=13,
                  fontweight="bold", color=TEXT_C, y=1.02)
 
     x = np.arange(len(SUBFOLDERS))
@@ -374,7 +379,7 @@ def chart_per_day_lines(results, sorted_models):
 
     ax.set_xticks(x)
     ax.set_xticklabels([FOLDER_LABELS[f] for f in SUBFOLDERS], fontsize=9)
-    ax.set_ylabel("Exact Match %")
+    ax.set_ylabel("Точное совпадение %")
     ax.set_ylim(0, 110)
     ax.grid(axis="both", zorder=0, alpha=0.5)
     ax.legend(loc="lower left", fontsize=10, ncol=2, framealpha=0.9)
@@ -382,13 +387,13 @@ def chart_per_day_lines(results, sorted_models):
     p = OUT_DIR / "03_per_day_lines.png"
     fig.savefig(p, dpi=150, bbox_inches="tight", facecolor=BG)
     plt.close(fig)
-    print(f"  Saved: {p}")
+    print(f"  Сохранено: {p}")
 
 
 def chart_empty_hyp(results, sorted_models):
     apply_light_style()
     fig, ax = plt.subplots(figsize=(14, 5))
-    fig.suptitle("Empty/Long Predictions per Model", fontsize=13,
+    fig.suptitle("Пустые/слишком длинные предсказания по моделям", fontsize=13,
                  fontweight="bold", color=TEXT_C, y=1.02)
 
     x = np.arange(len(sorted_models))
@@ -396,14 +401,14 @@ def chart_empty_hyp(results, sorted_models):
     n_empty = [results[m]["overall"]["n_empty_hyp"] for m in sorted_models]
     n_ok = [t - e for t, e in zip(n_total, n_empty)]
 
-    ax.bar(x, n_ok, color=PALETTE[3], label="Valid", width=0.7,
+    ax.bar(x, n_ok, color=PALETTE[3], label="Корректные", width=0.7,
            zorder=3, edgecolor="white", linewidth=1)
-    ax.bar(x, n_empty, bottom=n_ok, color=PALETTE[2], label="Empty / Long",
+    ax.bar(x, n_empty, bottom=n_ok, color=PALETTE[2], label="Пустые / длинные",
            width=0.7, zorder=3, edgecolor="white", linewidth=1)
 
     ax.set_xticks(x)
     ax.set_xticklabels([short_name(m) for m in sorted_models], fontsize=9)
-    ax.set_ylabel("Count")
+    ax.set_ylabel("Количество")
     ax.grid(axis="y", zorder=0, alpha=0.5)
     ax.legend(fontsize=10, framealpha=0.9)
 
@@ -416,13 +421,13 @@ def chart_empty_hyp(results, sorted_models):
     p = OUT_DIR / "04_empty_predictions.png"
     fig.savefig(p, dpi=150, bbox_inches="tight", facecolor=BG)
     plt.close(fig)
-    print(f"  Saved: {p}")
+    print(f"  Сохранено: {p}")
 
 
 def chart_cer_boxplot(results, sorted_models):
     apply_light_style()
     fig, ax = plt.subplots(figsize=(14, 6))
-    fig.suptitle("CER Distribution per Model", fontsize=13,
+    fig.suptitle("Распределение CER по моделям", fontsize=13,
                  fontweight="bold", color=TEXT_C, y=1.02)
 
     all_cers = []
@@ -443,13 +448,13 @@ def chart_cer_boxplot(results, sorted_models):
 
     ax.set_xticks(range(1, len(sorted_models) + 1))
     ax.set_xticklabels([short_name(m) for m in sorted_models], fontsize=9)
-    ax.set_ylabel("CER (lower is better)")
+    ax.set_ylabel("CER (меньше лучше)")
     ax.grid(axis="y", zorder=0, alpha=0.5)
     fig.tight_layout()
     p = OUT_DIR / "05_cer_boxplot.png"
     fig.savefig(p, dpi=150, bbox_inches="tight", facecolor=BG)
     plt.close(fig)
-    print(f"  Saved: {p}")
+    print(f"  Сохранено: {p}")
 
 
 def chart_radar(results, sorted_models):
@@ -463,7 +468,7 @@ def chart_radar(results, sorted_models):
             1 - o["n_empty_hyp"] / o["n"] if o["n"] else 0,
         ]
 
-    labels = ["ExactMatch%", "1 MeanCER", "Coverage\n(non-empty)"]
+    labels = ["Точн. совп. %", "1 − CER", "Покрытие\n(не пусто)"]
     N = len(labels)
     angles = np.linspace(0, 2 * np.pi, N, endpoint=False).tolist()
     angles += angles[:1]
@@ -471,7 +476,7 @@ def chart_radar(results, sorted_models):
     fig, ax = plt.subplots(figsize=(10, 10), subplot_kw=dict(polar=True))
     fig.patch.set_facecolor(BG)
     ax.set_facecolor(BG_PANEL)
-    fig.suptitle("Radar normalized metrics", fontsize=13,
+    fig.suptitle("Радар — нормализованные метрики", fontsize=13,
                  fontweight="bold", color=TEXT_C, y=0.97)
 
     ax.set_theta_offset(np.pi / 2)
@@ -496,13 +501,13 @@ def chart_radar(results, sorted_models):
     p = OUT_DIR / "06_radar.png"
     fig.savefig(p, dpi=150, bbox_inches="tight", facecolor=BG)
     plt.close(fig)
-    print(f"  Saved: {p}")
+    print(f"  Сохранено: {p}")
 
 
 def chart_speed_comparison(sorted_models, speed_data):
     apply_light_style()
     fig, axes = plt.subplots(1, 2, figsize=(16, 6))
-    fig.suptitle("Model Inference Speed Comparison (median, with reference)", fontsize=14,
+    fig.suptitle("Сравнение скорости инференса (медиана, с эталоном)", fontsize=14,
                  fontweight="bold", color=TEXT_C, y=1.02)
 
     models_display = [short_name(m) for m in sorted_models]
@@ -515,22 +520,22 @@ def chart_speed_comparison(sorted_models, speed_data):
     ax = axes[0]
     bars = ax.bar(x, speeds, color=colors, width=0.7, zorder=3,
                   edgecolor="white", linewidth=1)
-    ax.set_title("Inference Time per Image lower is better",
+    ax.set_title("Время на изображение — меньше лучше",
                  fontsize=12, pad=10, fontweight="bold")
     ax.set_xticks(x)
     ax.set_xticklabels(models_display, fontsize=9)
-    ax.set_ylabel("Time (ms)")
+    ax.set_ylabel("Время (мс)")
     ax.grid(axis="y", zorder=0, alpha=0.5)
 
     for bar, v in zip(bars, speeds):
         ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 5,
-                f"{v:.0f}ms", ha="center", va="bottom",
+                f"{v:.0f}мс", ha="center", va="bottom",
                 fontsize=10, color=TEXT_C, fontweight="bold")
 
     ax = axes[1]
     bars = ax.bar(x, fps, color=colors, width=0.7, zorder=3,
                   edgecolor="white", linewidth=1)
-    ax.set_title("Frames Per Second higher is better",
+    ax.set_title("Кадров в секунду — больше лучше",
                  fontsize=12, pad=10, fontweight="bold")
     ax.set_xticks(x)
     ax.set_xticklabels(models_display, fontsize=9)
@@ -546,13 +551,13 @@ def chart_speed_comparison(sorted_models, speed_data):
     p = OUT_DIR / "07_speed_comparison.png"
     fig.savefig(p, dpi=150, bbox_inches="tight", facecolor=BG)
     plt.close(fig)
-    print(f"  Saved: {p}")
+    print(f"  Сохранено: {p}")
 
 
 def chart_quality_vs_speed(results, sorted_models, speed_data):
     apply_light_style()
     fig, ax = plt.subplots(figsize=(12, 8))
-    fig.suptitle("Quality vs Speed Trade-off (with reference)", fontsize=14,
+    fig.suptitle("Компромисс качество/скорость (с эталоном)", fontsize=14,
                  fontweight="bold", color=TEXT_C, y=1.02)
 
     qualities = [results[m]["overall"]["exact_match_pct"] for m in sorted_models]
@@ -579,8 +584,8 @@ def chart_quality_vs_speed(results, sorted_models, speed_data):
                               edgecolor=colors[i],
                               alpha=0.8))
 
-    ax.set_xlabel("Inference Time (ms) faster", fontsize=11, fontweight="bold")
-    ax.set_ylabel("Exact Match % better", fontsize=11, fontweight="bold")
+    ax.set_xlabel("Время инференса (мс) — быстрее влево", fontsize=11, fontweight="bold")
+    ax.set_ylabel("Точное совпадение % — выше лучше", fontsize=11, fontweight="bold")
     ax.grid(True, alpha=0.3, zorder=0)
 
     ax2 = ax.twiny()
@@ -590,21 +595,21 @@ def chart_quality_vs_speed(results, sorted_models, speed_data):
     fps_ticks = [1000 / t if t > 0 else 0 for t in speed_ticks]
     ax2.set_xticks(speed_ticks)
     ax2.set_xticklabels([f"{f:.1f}" for f in fps_ticks])
-    ax2.set_xlabel("FPS faster", fontsize=11, fontweight="bold")
+    ax2.set_xlabel("FPS — быстрее вправо", fontsize=11, fontweight="bold")
 
     fig.tight_layout()
     p = OUT_DIR / "08_quality_vs_speed.png"
     fig.savefig(p, dpi=150, bbox_inches="tight", facecolor=BG)
     plt.close(fig)
-    print(f"  Saved: {p}")
+    print(f"  Сохранено: {p}")
 
 
 def print_results(results, sorted_models, speed_data, ref_speed):
     print("\n" + "=" * 120)
-    print("OVERALL (reference: qwen3-vl-8b) - ТОЛЬКО РОССИЙСКИЙ ФОРМАТ")
+    print("ОБЩИЕ РЕЗУЛЬТАТЫ (эталон: qwen3-vl-8b) — ТОЛЬКО РОССИЙСКИЙ ФОРМАТ")
     print("=" * 120)
     print(
-        f"{'Model':<35} {'Orig':>6} {'Filt':>6} {'N':>6} {'Exact%':>8} {'MeanCER':>9} {'Empty/Long':>12} {'Speed(ms)':>10} {'FPS':>8}")
+        f"{'Модель':<35} {'Всего':>6} {'Отфильт':>8} {'N':>6} {'Точн%':>8} {'СрCER':>9} {'Пустые/длин':>12} {'Время(мс)':>10} {'FPS':>8}")
     print("-" * 120)
     for m in sorted_models:
         if m == REFERENCE_MODEL:
@@ -612,19 +617,19 @@ def print_results(results, sorted_models, speed_data, ref_speed):
         o = results[m]["overall"]
         speed = speed_data[m]["median_time_ms"]
         fps = speed_data[m]["median_fps"]
-        print(f"{m:<35} {o['original_count']:>6} {o['filtered_out']:>6} "
+        print(f"{m:<35} {o['original_count']:>6} {o['filtered_out']:>8} "
               f"{o['n']:>6} {o['exact_match_pct']:>7.2f}% "
               f"{o['mean_cer']:>9.4f} {o['n_empty_hyp']:>12} "
               f"{speed:>10.0f} {fps:>8.1f}")
 
     print("-" * 120)
-    print(f"{REFERENCE_MODEL + ' (reference)':<35} "
-          f"{ref_speed['median_time_ms']:>47.0f} {ref_speed['median_fps']:>8.1f}")
+    print(f"{REFERENCE_MODEL + ' (эталон)':<35} "
+          f"{ref_speed['median_time_ms']:>49.0f} {ref_speed['median_fps']:>8.1f}")
 
     print("\n" + "=" * 120)
-    print("PER FOLDER ExactMatch% (только валидные номера)")
+    print("ПО ПАПКАМ — Точное совпадение % (только валидные номера)")
     print("=" * 120)
-    header = f"{'Model':<35}" + "".join(f"{f:>9}" for f in SUBFOLDERS)
+    header = f"{'Модель':<35}" + "".join(f"{f:>9}" for f in SUBFOLDERS)
     print(header)
     print("-" * 120)
     for m in sorted_models:
@@ -638,41 +643,41 @@ def print_results(results, sorted_models, speed_data, ref_speed):
 
 def main():
     ref_path = BASE_DIR / REFERENCE_MODEL / REFERENCE_JSON
-    print(f"Loading reference: {ref_path}")
+    print(f"Загрузка эталона: {ref_path}")
     ref_records = load_json(ref_path)
     ref_global = {r["filename"]: r["plate_text_raw"] for r in ref_records}
-    print(f"Reference records (всего): {len(ref_global)}")
+    print(f"Записей эталона (всего): {len(ref_global)}")
 
     valid_refs = {k: v for k, v in ref_global.items()
                   if is_valid_russian_plate(normalize(v))}
 
-    print("Building reference hit set (edit_distance ≤ 2)...")
+    print("Формирование набора совпадений эталона (edit_distance ≤ 2)...")
     ref_hit_set = build_reference_hit_set(valid_refs, REFERENCE_MODEL, REFERENCE_JSON)
-    print(f"Reference hits: {len(ref_hit_set)} / {len(valid_refs)} "
+    print(f"Совпадений эталона: {len(ref_hit_set)} / {len(valid_refs)} "
           f"({len(ref_hit_set) / len(valid_refs) * 100:.1f}% валидных номеров)")
 
-    print(f"Reference records (российский формат): {len(valid_refs)}")
+    print(f"Записей эталона (российский формат): {len(valid_refs)}")
     print(f"Отфильтровано: {len(ref_global) - len(valid_refs)} записей\n")
 
     ref_speed = collect_speed_data(REFERENCE_MODEL, REFERENCE_JSON)
-    print(f"Reference model ({REFERENCE_MODEL}) speed:")
-    print(f"    Median time: {ref_speed['median_time_ms']:.0f} ms, "
-          f"Median FPS: {ref_speed['median_fps']:.1f}\n")
+    print(f"Скорость эталонной модели ({REFERENCE_MODEL}):")
+    print(f"    Медиана времени: {ref_speed['median_time_ms']:.0f} мс, "
+          f"Медиана FPS: {ref_speed['median_fps']:.1f}\n")
 
     speed_data = {}
     for model_name, json_file in MODELS.items():
-        print(f"Collecting speed data for: {model_name}...")
+        print(f"Сбор данных о скорости: {model_name}...")
         speed_data[model_name] = collect_speed_data(model_name, json_file)
-        print(f"    Median time: {speed_data[model_name]['median_time_ms']:.0f} ms, "
-              f"Median FPS: {speed_data[model_name]['median_fps']:.1f}")
+        print(f"    Медиана времени: {speed_data[model_name]['median_time_ms']:.0f} мс, "
+              f"Медиана FPS: {speed_data[model_name]['median_fps']:.1f}")
 
     speed_data[REFERENCE_MODEL] = ref_speed
 
     results = {}
     for model_name, json_file in MODELS.items():
-        print(f"Processing: {model_name}...")
+        print(f"Обработка: {model_name}...")
         results[model_name] = compare_model(model_name, json_file, valid_refs,
-            allowed_filenames=ref_hit_set )
+                                            allowed_filenames=ref_hit_set)
 
     sorted_models = sorted(
         MODELS.keys(),
@@ -697,15 +702,15 @@ def main():
     out_path = BASE_DIR / "comparison_results_filtered.json"
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(out_json, f, ensure_ascii=False, indent=2)
-    print(f"\nJSON saved: {out_path}")
+    print(f"\nJSON сохранён: {out_path}")
 
-    print(f"\nGenerating charts {OUT_DIR}/")
+    print(f"\nГенерация графиков в {OUT_DIR}/")
 
     chart_overall_bars(results, sorted_models, speed_data)
     chart_heatmap(results, sorted_models, "exact_match_pct",
-                  "Exact Match %", lambda v: f"{v:.0f}%", "YlOrRd")
+                  "Точное совпадение %", lambda v: f"{v:.0f}%", "YlOrRd")
     chart_heatmap(results, sorted_models, "mean_cer",
-                  "Mean CER", lambda v: f"{v:.3f}", "RdYlGn_r")
+                  "Средний CER", lambda v: f"{v:.3f}", "RdYlGn_r")
     chart_per_day_lines(results, sorted_models)
     chart_empty_hyp(results, sorted_models)
     chart_cer_boxplot(results, sorted_models)
@@ -714,7 +719,7 @@ def main():
     chart_speed_comparison(all_models_speed, speed_data)
     chart_quality_vs_speed(results, sorted_models, speed_data)
 
-    print("\nDone! All charts saved.")
+    print("\nГотово! Все графики сохранены.")
 
 
 if __name__ == "__main__":

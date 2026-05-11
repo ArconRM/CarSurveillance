@@ -55,7 +55,7 @@ def create_api() -> FastAPI:
     # Initialize models
     detection_model_yolov5 = YOLO("models/best_v5.pt")
     detection_model_yolov8 = YOLO("models/best_v8.pt")
-    detection_model_yolov8l = YOLO("models/best_v8l.pt")
+    # detection_model_yolov8l = YOLO("models/best_v8l.pt")
     detection_model_yolov11 = YOLO("models/best_v11.pt")
 
     ocr_model = PaddleOCR(lang='en', det=False, rec=True, use_angle_cls=False, use_gpu=USE_GPU)
@@ -82,8 +82,8 @@ def create_api() -> FastAPI:
             detection_model = detection_model_yolov5
         elif req.model == "yolov8":
             detection_model = detection_model_yolov8
-        elif req.model == "yolov8l":
-            detection_model = detection_model_yolov8l
+        # elif req.model == "yolov8l":
+        #     detection_model = detection_model_yolov8l
         elif req.model == "yolov11":
             detection_model = detection_model_yolov11
         else:
@@ -778,6 +778,302 @@ def create_api() -> FastAPI:
             "average_ocr_time_ms": round(avg_time, 2),
             "results_file": result_file,
             "model_used": req.model
+        }
+
+    @app.post("/api/recognizeLicensePlatesEasyOCR")
+    async def recognize_license_plates_easyocr(req: RecognizeLicensePlatesRequest):
+        """
+        Run EasyOCR on pre-cropped license plate images with all upscalers
+        Оптимизирован для всратых номеров с хреновой четкостью
+        """
+        from tqdm import tqdm
+        import sys
+        import time as time_module
+        import easyocr
+
+        MAX_WORKERS = 2  # EasyOCR сам неплохо параллелит
+
+        crops_data_dir = req.crops_data_dir
+        result_data_dir = req.result_data_dir
+
+        # Gather crop paths recursively
+        crop_paths = []
+        for ext in image_extensions:
+            crop_paths.extend(glob.glob(os.path.join(crops_data_dir, "**", ext), recursive=True))
+        crop_paths = sorted(crop_paths)
+
+        print(f"Found {len(crop_paths)} crops in {crops_data_dir}")
+        os.makedirs(result_data_dir, exist_ok=True)
+
+        # Инициализируем EasyOCR с настройками под всратые номера
+        print("Initializing EasyOCR (это займет немного времени при первом запуске)...")
+
+        # Основной ридер для номеров - только буквы и цифры
+        ocr_reader = easyocr.Reader(
+            ['en'],  # Английский (латиница для номеров РФ)
+            gpu=USE_GPU,
+            model_storage_directory='models/easyocr',
+            download_enabled=True
+        )
+
+        available_upscalers = upscaler_manager.get_available_methods()
+        print(f"Available upscalers: {available_upscalers}")
+
+        # def preprocess_for_easyocr(img_bgr):
+        #     """
+        #     Предобработка специально для всратых номеров:
+        #     - Увеличение контраста
+        #     - Адаптивная бинаризация
+        #     - Шумоподавление
+        #     - Увеличение резкости
+        #     """
+        #     # Переводим в grayscale
+        #     gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+        #
+        #     # Увеличиваем контраст через CLAHE
+        #     clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+        #     contrasted = clahe.apply(gray)
+        #
+        #     # Небольшое размытие для удаления шума
+        #     denoised = cv2.fastNlMeansDenoising(contrasted, None, 10, 7, 21)
+        #
+        #     # Увеличиваем резкость
+        #     kernel_sharpen = np.array([[-1, -1, -1],
+        #                                [-1, 9, -1],
+        #                                [-1, -1, -1]])
+        #     sharpened = cv2.filter2D(denoised, -1, kernel_sharpen)
+        #
+        #     # Бинаризация Otsu для четких границ символов
+        #     _, binary = cv2.threshold(sharpened, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        #
+        #     # Морфологические операции для соединения разрывов в символах
+        #     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
+        #     morphed = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
+        #
+        #     # Обратно в 3 канала для EasyOCR (он ожидает цветное)
+        #     return cv2.cvtColor(morphed, cv2.COLOR_GRAY2BGR)
+
+        def process_single_crop_easyocr(args):
+            """Process a single crop with EasyOCR + upscalers"""
+            cp, idx, total = args
+
+            try:
+                img = cv2.imread(cp)
+                if img is None:
+                    return None
+
+                filename = Path(cp).name
+
+                # Extract time from filename
+                try:
+                    time = Path(cp).stem.split("_")[1].split("-")[0]
+                except:
+                    time = "unknown"
+
+                # Calculate relative path
+                rel_path = os.path.relpath(os.path.dirname(cp), crops_data_dir)
+                if rel_path == ".":
+                    rel_path = ""
+
+                # ---------- RAW ----------
+                try:
+                    # Сначала пробуем без предобработки
+                    (raw_results, ocr_time) = measure_time(
+                        lambda: ocr_reader.readtext(
+                            img,
+                            allowlist='ABEKMHOPCTYX0123456789',  # Только символы российских номеров
+                            paragraph=False,
+                            min_size=10,
+                            text_threshold=0.5,  # Пониже порог для всратых номеров
+                            low_text=0.3,
+                            link_threshold=0.3,
+                            width_ths=0.5,
+                            mag_ratio=2.0,  # Увеличиваем для мелких символов
+                            contrast_ths=0.1,  # Низкий порог контраста
+                            adjust_contrast=0.5,  # Авто-контраст
+                        )
+                    )
+
+                    ocr_time_ms = ocr_time * 1000
+                    ocr_fps = 1.0 / ocr_time if ocr_time > 0 else 0.0
+
+                    if raw_results and len(raw_results) > 0:
+                        # Собираем весь текст и берем максимальную уверенность
+                        texts = [r[1] for r in raw_results]
+                        confs = [r[2] for r in raw_results]
+                        text_raw = "".join(texts).replace(" ", "").upper()
+                        confidence_raw = np.mean(confs) if confs else 0.0
+                    else:
+                        text_raw = "N/A"
+                        confidence_raw = 0.0
+
+                except Exception as e:
+                    print(f"[RAW] OCR error for {filename}: {e}", flush=True)
+                    text_raw = "ERROR"
+                    confidence_raw = 0.0
+                    ocr_time_ms = 0.0
+                    ocr_fps = 0.0
+
+                result_entry = {
+                    "time": time,
+                    "filename": filename,
+                    "relative_path": rel_path,
+                    "full_path": cp,
+                    "plate_text_raw": text_raw,
+                    "confidence_raw": float(confidence_raw),
+                    "ocr_time_ms": round(ocr_time_ms, 3),
+                    "ocr_fps": round(ocr_fps, 2),
+                }
+
+                # ---------- UPSCALERS ----------
+                for upscaler_name in available_upscalers:
+                    field_suffix = upscaler_name.lower().replace("-", "_").replace(" ", "_")
+
+                    try:
+                        # Upscale изображение
+                        processed_img = preprocess_crop(cp, upscaler_manager, upscaler_name=upscaler_name)
+
+                        if processed_img is None:
+                            continue
+
+                        # Дополнительная предобработка для всратых номеров
+                        # preprocessed = preprocess_for_easyocr(processed_img)
+
+                        # OCR на предобработанном
+                        proc_results = ocr_reader.readtext(
+                            processed_img,
+                            allowlist='ABEKMHOPCTYX0123456789',
+                            paragraph=False,
+                            min_size=10,
+                            text_threshold=0.4,  # Еще ниже порог после улучшения
+                            low_text=0.2,
+                            link_threshold=0.2,
+                            width_ths=0.5,
+                            mag_ratio=1.5,
+                            contrast_ths=0.1,
+                            adjust_contrast=0.3,
+                        )
+
+                        if proc_results and len(proc_results) > 0:
+                            texts = [r[1] for r in proc_results]
+                            confs = [r[2] for r in proc_results]
+                            text_proc = "".join(texts).replace(" ", "").upper()
+                            conf_proc = np.mean(confs) if confs else 0.0
+                        else:
+                            text_proc = "N/A"
+                            conf_proc = 0.0
+
+                        result_entry[f"plate_text_processed_{field_suffix}"] = text_proc
+                        result_entry[f"confidence_processed_{field_suffix}"] = float(conf_proc)
+
+                    except Exception as e:
+                        result_entry[f"plate_text_processed_{field_suffix}"] = "ERROR"
+                        result_entry[f"confidence_processed_{field_suffix}"] = 0.0
+
+                return result_entry
+
+            except Exception as e:
+                print(f"Error processing {cp}: {e}", flush=True)
+                return None
+
+        # Process crops with progress bar
+        results = []
+        start_time = time_module.time()
+
+        pbar = tqdm(
+            total=len(crop_paths),
+            desc="EasyOCR Recognition",
+            unit="crop",
+            ncols=100,
+            bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]",
+            file=sys.stdout,
+            colour='yellow'
+        )
+
+        # Используем ThreadPoolExecutor, но с ограничением, т.к. EasyOCR внутри паралеллит
+        with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            process_args = [(cp, idx, len(crop_paths)) for idx, cp in enumerate(crop_paths)]
+
+            future_to_crop = {
+                executor.submit(process_single_crop_easyocr, args): args[0]
+                for args in process_args
+            }
+
+            for future in concurrent.futures.as_completed(future_to_crop):
+                cp = future_to_crop[future]
+                try:
+                    result = future.result()
+                    if result is not None:
+                        results.append(result)
+                        text_raw = result.get("plate_text_raw", "N/A")
+                        conf_raw = result.get("confidence_raw", 0.0)
+                        pbar.set_postfix({
+                            "last": text_raw[:10],
+                            "conf": f"{conf_raw:.2f}"
+                        })
+                except Exception as e:
+                    print(f"Error processing {cp}: {e}", flush=True)
+                finally:
+                    pbar.update(1)
+
+        pbar.close()
+
+        elapsed_time = time_module.time() - start_time
+
+        # Sort results
+        results.sort(key=lambda x: x.get("filename", ""))
+
+        # Save results
+        result_file = os.path.join(result_data_dir, "recognition_results_easyocr.json")
+        with open(result_file, 'w', encoding='utf-8') as f:
+            json.dump(results, f, indent=2, ensure_ascii=False)
+
+        # Save by subfolder
+        results_by_folder = {}
+        for result in results:
+            rel_path = result.get("relative_path", "")
+            if rel_path not in results_by_folder:
+                results_by_folder[rel_path] = []
+            results_by_folder[rel_path].append(result)
+
+        for rel_path, folder_results in results_by_folder.items():
+            if rel_path:
+                folder_result_dir = os.path.join(result_data_dir, rel_path)
+                os.makedirs(folder_result_dir, exist_ok=True)
+                folder_result_file = os.path.join(folder_result_dir, "recognition_results_easyocr.json")
+                with open(folder_result_file, 'w', encoding='utf-8') as f:
+                    json.dump(folder_results, f, indent=2, ensure_ascii=False)
+
+        # Stats
+        successful = sum(1 for r in results if r.get("plate_text_raw") not in ["ERROR", "N/A"])
+        failed = len(results) - successful
+
+        print(f"\n{'=' * 60}")
+        print(f"EasyOCR Recognition completed!")
+        print(f"Statistics:")
+        print(f"   • Total crops: {len(results)}")
+        print(f"   • Successful: {successful}")
+        print(f"   • Failed: {failed}")
+        print(f"   • Success rate: {successful / len(results) * 100:.1f}%" if results else "N/A")
+        print(f"   • Time elapsed: {elapsed_time:.2f}s")
+        print(f"   • Avg speed: {len(results) / elapsed_time:.2f} crops/sec")
+        print(f"   • Results: {result_file}")
+        print(f"{'=' * 60}")
+
+        if results:
+            print(f"\nRecognition Summary (first 10):")
+            for r in results[:10]:
+                rel_path = f"[{r.get('relative_path', '')}]" if r.get('relative_path') else ""
+                status = "✓" if r['plate_text_raw'] not in ["ERROR", "N/A"] else "✗"
+                print(f"  {status} {rel_path} {r['filename']}: {r['plate_text_raw']} ({r['confidence_raw']:.3f})")
+
+        return {
+            "status": "ok",
+            "total_processed": len(results),
+            "successful": successful,
+            "failed": failed,
+            "processing_time": elapsed_time,
+            "results_file": result_file
         }
 
     return app
